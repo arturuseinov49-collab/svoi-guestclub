@@ -10,7 +10,7 @@ import { Manrope_700Bold } from '@expo-google-fonts/manrope/700Bold';
 import { Manrope_800ExtraBold } from '@expo-google-fonts/manrope/800ExtraBold';
 import { Role } from './src/domain';
 import { StoreProvider, useStore } from './src/store';
-import { Bonuses, Guests, Home, MyVisits, Reviews, ScreenActions } from './src/screens';
+import { Bonuses, Guests, Home, MyVisits, Reviews, StaffTools, ScreenActions } from './src/screens';
 import { Panel, Panels } from './src/panels';
 import { IntegrationPanel } from './src/integrations/IntegrationPanel';
 import { C, Icon, IconButton, IconName, Txt, fx } from './src/ui';
@@ -60,22 +60,27 @@ function Application() {
     redeem: (rewardId, guestId) => setPanel(guestId ? { kind: 'redeem', rewardId, guestId } : { kind: 'pick', next: 'redeem', rewardId }),
     reply: reviewId => { if (role === 'staff') setPanel({ kind: 'reply', reviewId }); },
   };
-  const tabs: { title: string; icon: IconName; active: IconName }[] = [
-    { title: role === 'staff' ? 'Обзор' : 'Главная', icon: 'grid-outline', active: 'grid' },
-    { title: role === 'staff' ? 'Гости' : 'Визиты', icon: role === 'staff' ? 'people-outline' : 'footsteps-outline', active: role === 'staff' ? 'people' : 'footsteps' },
-    { title: 'Бонусы', icon: 'gift-outline', active: 'gift' },
-    { title: 'Отзывы', icon: 'chatbubbles-outline', active: 'chatbubbles' },
+  const tabs: { id: number; title: string; icon: IconName; active: IconName }[] = role === 'staff' ? [
+    { id: 0, title: 'Смена', icon: 'scan-outline', active: 'scan' },
+    { id: 1, title: 'Гости', icon: 'people-outline', active: 'people' },
+    { id: 4, title: 'Ещё', icon: 'ellipsis-horizontal-outline', active: 'ellipsis-horizontal' },
+  ] : [
+    { id: 0, title: 'Главная', icon: 'grid-outline', active: 'grid' },
+    { id: 1, title: 'Визиты', icon: 'footsteps-outline', active: 'footsteps' },
+    { id: 2, title: 'Бонусы', icon: 'gift-outline', active: 'gift' },
+    { id: 3, title: 'Отзывы', icon: 'chatbubbles-outline', active: 'chatbubbles' },
   ];
+  const activeTab = role === 'staff' && tab >= 2 ? 4 : tab;
   const staffPanels = ['guest', 'visit', 'award', 'note', 'pick', 'reply', 'newGuest', 'scan', 'integrations'];
   const ownerPanels = ['team', 'program'];
   const allowedPanel = panel && (panelContext.venueId !== venue.id || (('guestId' in panel) && !db.memberships.some(m => m.guestId === panel.guestId && m.venueId === venue.id)) || (('reviewId' in panel) && !db.reviews.some(r => r.id === panel.reviewId && r.venueId === venue.id)) || (staffPanels.includes(panel.kind) && role !== 'staff') || (ownerPanels.includes(panel.kind) && permission?.role !== 'owner')) ? null : panel;
   const panelProps = { panel: allowedPanel, venue, role, setPanel, setVenue: changeVenue, setRole: changeRole, notify: setToast, openDeveloper };
   return <View style={styles.outer}><StatusBar style="dark" /><View style={[styles.phone, { paddingTop: Math.max(insets.top, telegram.top), paddingBottom: telegram.bottom }]}>
     <View style={styles.brandHeader}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><View {...fx("brand")} style={styles.brandIcon}><Icon name="leaf" size={17} color={C.lime} /></View><Txt weight="extra" style={{ fontSize: 31, letterSpacing: -2 }}>свои</Txt></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}><Pressable accessibilityRole="button" accessibilityLabel="Ваш аккаунт и доступ" onPress={() => setPanel({ kind: 'settings' })} style={styles.rolePill}><View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: C.pine }} /><Txt weight="bold" style={{ fontSize: 9, letterSpacing: 0.8 }}>{role === 'staff' ? 'КОМАНДА' : 'ГОСТЬ'} · {syncError ? 'НЕТ СВЯЗИ' : 'LIVE'}</Txt></Pressable><IconButton name="person-outline" label="Профиль и настройки" onPress={() => setPanel({ kind: 'settings' })} /></View></View>
-    <View style={styles.venueBar}><Pressable accessibilityRole="button" accessibilityLabel={`Сменить заведение, сейчас ${venue.name}`} onPress={() => setPanel({ kind: 'venues' })} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}><View {...fx("foil")} style={styles.venueIcon}><Txt weight="extra" style={{ fontSize: 17 }}>{venue.monogram}</Txt></View><View style={{ gap: 3, flex: 1, minWidth: 0 }}><Txt numberOfLines={1} weight="bold" style={{ fontSize: 13 }}>{venue.name} <Icon name="chevron-down" size={12} /></Txt><Txt numberOfLines={1} style={{ color: C.muted, fontSize: 10 }}>{venue.kind}</Txt></View></Pressable>{role === 'staff' && <IconButton name={tab === 1 ? 'person-add-outline' : 'git-compare-outline'} label={tab === 1 ? 'Добавить гостя' : 'Открыть интеграции'} onPress={() => setPanel({ kind: tab === 1 ? 'newGuest' : 'integrations' })} />}{role === 'guest' && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, maxWidth: '42%' }}><Icon name="location-outline" size={13} color={C.muted} /><Txt numberOfLines={2} style={{ fontSize: 10, color: C.muted, flexShrink: 1 }}>{venue.address}</Txt></View>}</View>
+    <View style={styles.venueBar}><Pressable accessibilityRole="button" accessibilityLabel={`Сменить заведение, сейчас ${venue.name}`} onPress={() => setPanel({ kind: 'venues' })} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}><View {...fx("foil")} style={styles.venueIcon}><Txt weight="extra" style={{ fontSize: 17 }}>{venue.monogram}</Txt></View><View style={{ gap: 3, flex: 1, minWidth: 0 }}><Txt numberOfLines={1} weight="bold" style={{ fontSize: 13 }}>{venue.name} <Icon name="chevron-down" size={12} /></Txt><Txt numberOfLines={1} style={{ color: C.muted, fontSize: 10 }}>{venue.kind}</Txt></View></Pressable>{role === 'guest' && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, maxWidth: '42%' }}><Icon name="location-outline" size={13} color={C.muted} /><Txt numberOfLines={2} style={{ fontSize: 10, color: C.muted, flexShrink: 1 }}>{venue.address}</Txt></View>}</View>
     <SyncStatus />
-    <ScrollView ref={scroll} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>{tab === 0 ? <Home {...actions} /> : tab === 1 ? role === 'staff' ? <Guests {...actions} /> : <MyVisits {...actions} /> : tab === 2 ? <Bonuses {...actions} /> : <Reviews {...actions} />}</ScrollView>
-    <View {...fx("nav")} style={[styles.nav, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'web' ? 13 : 8) }]}>{tabs.map((item, i) => <Pressable key={item.title} accessibilityRole="tab" accessibilityLabel={item.title} accessibilityState={{ selected: tab === i }} onPress={() => setTab(i)} style={({ pressed }) => [styles.navItem, pressed && { opacity: 0.55 }]}><View {...fx(tab === i ? "nav-active" : "nav-idle")} style={[styles.navIcon, tab === i && { backgroundColor: C.lime }]}><Icon name={tab === i ? item.active : item.icon} color={tab === i ? C.pine : '#8D978B'} size={21} /></View><Txt weight={tab === i ? 'bold' : 'medium'} style={{ fontSize: 10, color: tab === i ? C.lime : '#B8BCAF' }}>{item.title}</Txt></Pressable>)}</View>
+    <ScrollView ref={scroll} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>{tab === 0 ? <Home {...actions} /> : tab === 1 ? role === 'staff' ? <Guests {...actions} /> : <MyVisits {...actions} /> : tab === 2 ? <Bonuses {...actions} /> : tab === 3 ? <Reviews {...actions} /> : <StaffTools {...actions} />}</ScrollView>
+    <View {...fx("nav")} style={[styles.nav, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'web' ? 13 : 8) }]}>{tabs.map(item => <Pressable key={item.title} accessibilityRole="tab" accessibilityLabel={item.title} accessibilityState={{ selected: activeTab === item.id }} onPress={() => setTab(item.id)} style={({ pressed }) => [styles.navItem, pressed && { opacity: 0.55 }]}><View {...fx(activeTab === item.id ? "nav-active" : "nav-idle")} style={[styles.navIcon, activeTab === item.id && { backgroundColor: C.lime }]}><Icon name={activeTab === item.id ? item.active : item.icon} color={activeTab === item.id ? C.pine : '#8D978B'} size={21} /></View><Txt weight={activeTab === item.id ? 'bold' : 'medium'} style={{ fontSize: 10, color: activeTab === item.id ? C.lime : '#B8BCAF' }}>{item.title}</Txt></Pressable>)}</View>
     {!!toast && <Pressable accessibilityRole="alert" onPress={() => setToast('')} style={[styles.toast, { top: insets.top + 9 }]}><Icon name="checkmark-circle" size={21} color={C.lime} /><Txt weight="semibold" style={{ color: '#FFF', fontSize: 12, flex: 1 }}>{toast}</Txt><Icon name="close" size={17} color="#FFF" /></Pressable>}
     <Panels {...panelProps} />
     <IntegrationPanel {...panelProps} />

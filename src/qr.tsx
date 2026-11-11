@@ -172,7 +172,7 @@ export function ScanGuest({ venueId, onResolved, onCancel }: { venueId: string; 
 
   const stop = () => { stopResources(); setMode('idle'); };
   return <View style={{ gap: 17 }}>
-    <Callout icon="qr-code-outline">Сканируйте личный QR гостя. Затем проверьте имя и подтвердите визит.</Callout>
+    <Callout icon="qr-code-outline">Сканируйте личный QR гостя. Откроется его карточка с предпочтениями и историей визитов.</Callout>
     <Button label={mode === 'starting' ? 'Запрашиваем камеру…' : mode === 'telegram' ? nativeNeedsRecovery ? 'Открыть сканер снова' : 'Сканер Telegram открыт' : mode === 'camera' ? 'Камера открыта' : 'Открыть камеру'} icon="scan-outline" disabled={busy || (mode !== 'idle' && !(mode === 'telegram' && nativeNeedsRecovery))} onPress={start} />
     {Platform.OS === 'web' && <video ref={video} playsInline muted autoPlay aria-label="Камера для сканирования QR гостя" style={{ display: mode === 'camera' || mode === 'starting' ? 'block' : 'none', width: '100%', maxHeight: 270, borderRadius: 18, objectFit: 'cover', background: '#101710' }} />}
     {mode !== 'idle' && <Button label="Закрыть камеру" variant="ghost" onPress={stop} />}

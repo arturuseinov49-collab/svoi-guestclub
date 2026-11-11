@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { recordVisit, awardBonus, addNote, addReview, replyReview, redeemReward, validateProgram } from './domain.mjs';
 import { effectiveGuestProfile, validateGuestProfile } from './venue-profile.mjs';
+import { validateServiceFlow } from './service-flow.mjs';
 
 const empty = () => ({ version: 1, venues: [], guests: [], memberships: [], visits: [], notes: [], reviews: [], transactions: [], posEvents: [] });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -128,7 +129,7 @@ export class Store {
     return { user: { id: row.id, firstName: row.first_name, lastName: row.last_name, username: row.username }, guestId: row.guest_id, guestCode: row.guest_code, guestQr: qrPrefix + row.guest_qr, isDeveloper: this.isDeveloper(userId), staffVenues,
       catalog: db.venues.filter(venue => effectiveGuestProfile(venue).published).map(catalogVenue),
       db: { version: 1,
-        venues: db.venues.filter(venue => permitted.has(venue.id) || member.has(venue.id)).map(venue => { const { joinCode, ...publicVenue } = venue; return permitted.has(venue.id) ? venue : publicVenue; }),
+        venues: db.venues.filter(venue => permitted.has(venue.id) || member.has(venue.id)).map(venue => { const { joinCode, serviceFlow, ...publicVenue } = venue; return permitted.has(venue.id) ? venue : publicVenue; }),
         guests: db.guests.filter(guest => guestIds.has(guest.id)), memberships,
         visits: db.visits.filter(visible).map(visit => permitted.has(visit.venueId) ? visit : { ...visit, rating: null }),
         notes: db.notes.filter(note => permitted.has(note.venueId)), reviews: db.reviews.filter(visible), transactions: db.transactions.filter(visible), posEvents: [],
@@ -218,6 +219,13 @@ export class Store {
           const program = { cashback: input.program.cashback, everyVisits: input.program.everyVisits, visitBonus: input.program.visitBonus, tipsBonus: input.program.tipsBonus };
           validateProgram(program); db.venues = db.venues.map(item => item.id === venueId ? { ...item, program } : item); break;
         }
+        case 'updateServiceFlow': {
+          staff(true); this.requireVenue(venueId, db);
+          let serviceFlow;
+          try { serviceFlow = validateServiceFlow(input.serviceFlow); }
+          catch (error) { fail(400, error.message); }
+          db.venues = db.venues.map(item => item.id === venueId ? { ...item, serviceFlow } : item); break;
+        }
         case 'addReview': member(ownGuestId); db = addReview(db, venueId, ownGuestId, input.rating, string(input.text, 3, 1000, 'Отзыв')); break;
         case 'replyReview': {
           const review = db.reviews.find(item => item.id === input.reviewId); if (!review) fail(404, 'Отзыв не найден'); this.requireStaff(userId, review.venueId); db = replyReview(db, review.id, string(input.response, 3, 1000, 'Ответ')); break;
@@ -252,7 +260,7 @@ export class Store {
       let auditVenueId = null; let auditGuestId = null;
       if (['createVenue', 'joinVenue', 'acceptStaffInvite'].includes(type)) auditVenueId = result.venueId;
       if (type === 'joinVenue') auditGuestId = ownGuestId;
-      if (['addGuest', 'scanGuest', 'recordVisit', 'awardBonus', 'addNote', 'updateProgram', 'updateVenueProfile', 'redeemReward', 'createStaffInvite', 'createManagerInvite', 'revokeManager', 'listStaff', 'revokeStaff', 'addReview'].includes(type)) auditVenueId = venueId;
+      if (['addGuest', 'scanGuest', 'recordVisit', 'awardBonus', 'addNote', 'updateProgram', 'updateServiceFlow', 'updateVenueProfile', 'redeemReward', 'createStaffInvite', 'createManagerInvite', 'revokeManager', 'listStaff', 'revokeStaff', 'addReview'].includes(type)) auditVenueId = venueId;
       if (['recordVisit', 'awardBonus', 'addNote', 'redeemReward'].includes(type)) auditGuestId = input.guestId;
       if (['addGuest', 'scanGuest'].includes(type)) auditGuestId = result.guestId;
       if (type === 'addReview') auditGuestId = ownGuestId;
@@ -264,7 +272,7 @@ export class Store {
   authorizeReplay(userId, input) {
     if (['createVenue', 'listManagedVenues', 'createManagerInvite', 'revokeManager', 'updateVenueProfile'].includes(input.type)) this.requireDeveloper(userId);
     if (['recordVisit', 'awardBonus', 'addNote', 'redeemReward', 'addGuest', 'scanGuest'].includes(input.type)) this.requireStaff(userId, input.venueId);
-    if (['updateProgram', 'createStaffInvite', 'listStaff', 'revokeStaff'].includes(input.type)) this.requireStaff(userId, input.venueId, true);
+    if (['updateProgram', 'updateServiceFlow', 'createStaffInvite', 'listStaff', 'revokeStaff'].includes(input.type)) this.requireStaff(userId, input.venueId, true);
     if (input.type === 'acceptStaffInvite') { const invite = this.sql.prepare('SELECT venue_id, role FROM invites WHERE code_hash=? AND used_by=?').get(hash(normalCode(input.code)), userId); if (!invite) fail(403, 'Приглашение больше недоступно'); this.requireStaff(userId, invite.venue_id, invite.role === 'owner'); }
     if (input.type === 'replyReview') { const review = this.read().reviews.find(item => item.id === input.reviewId); if (!review) fail(404, 'Отзыв не найден'); this.requireStaff(userId, review.venueId); }
   }

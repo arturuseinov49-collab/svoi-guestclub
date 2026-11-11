@@ -63,7 +63,9 @@ async function session(request: APIRequestContext, user: Identity) {
   expect(response.status()).toBe(200); return response.json();
 }
 async function state(request: APIRequestContext, token: string) {
-  const response = await request.get('/api/state', { headers: { Authorization: `Bearer ${token}` } });
+  // A long browser interaction can outlive the local server's keep-alive socket.
+  // Retry only a connection reset on this read; never retry mutations or HTTP errors.
+  const response = await request.get('/api/state', { headers: { Authorization: `Bearer ${token}` }, maxRetries: 1 });
   expect(response.status()).toBe(200); return response.json();
 }
 
@@ -109,7 +111,9 @@ test('developer appoints manager, manager invites staff, guest QR requires expli
     await developer.page.screenshot({ path: resolve('../svoi-developer-preview.png') });
     await manager.page.getByRole('button', { name: 'Я сотрудник', exact: true }).click();
     await manager.page.getByLabel('Код приглашения', { exact: true }).fill(managerCode.result.code);
-    await manager.page.getByRole('button', { name: 'Принять приглашение', exact: true }).click();
+    await resultOf(manager.page, 'acceptStaffInvite', () => manager.page.getByRole('button', { name: 'Принять приглашение', exact: true }).click());
+    // Wait for the guest portal to be replaced before opening the staff profile.
+    await expect(manager.page.getByRole('tab', { name: 'Смена', exact: true })).toBeVisible();
     await profile(manager.page);
     await expect(manager.page.getByRole('button', { name: 'Панель разработчика', exact: true })).toHaveCount(0);
     await manager.page.getByRole('button', { name: 'Управление командой', exact: true }).click();
@@ -121,7 +125,8 @@ test('developer appoints manager, manager invites staff, guest QR requires expli
     await expect(manager.page.getByText(/Зажмите код выше/)).toBeVisible();
     await staff.page.getByRole('button', { name: 'Я сотрудник', exact: true }).click();
     await staff.page.getByLabel('Код приглашения', { exact: true }).fill(staffCode.result.code);
-    await staff.page.getByRole('button', { name: 'Принять приглашение', exact: true }).click();
+    await resultOf(staff.page, 'acceptStaffInvite', () => staff.page.getByRole('button', { name: 'Принять приглашение', exact: true }).click());
+    await expect(staff.page.getByRole('tab', { name: 'Смена', exact: true })).toBeVisible();
     const guestAccount = await session(request, guestIdentity);
     await expect(guest.page.getByRole('img', { name: 'Личный QR гостя', exact: true })).toBeVisible();
     const qrScreenshot = await guest.page.getByTestId('guest-qr').screenshot({ path: resolve('../../work/guest-qr-ui.png') });
@@ -148,6 +153,9 @@ test('developer appoints manager, manager invites staff, guest QR requires expli
     await expect(staff.page.getByText('Гость QR Проверка', { exact: true }).last()).toBeVisible();
     let guestState = await state(request, guestAccount.token);
     expect(guestState.db.memberships).toHaveLength(1); expect(guestState.db.visits).toHaveLength(0); expect(guestState.db.transactions).toHaveLength(0);
+    await expect(staff.page.getByText('Предпочтения гостя', { exact: true })).toBeVisible();
+    await expect(staff.page.getByLabel('Сумма чека, ₽', { exact: true })).toHaveCount(0);
+    await staff.page.getByRole('button', { name: 'Отметить визит', exact: true }).click();
     await staff.page.getByLabel('Сумма чека, ₽', { exact: true }).fill('0');
     await staff.page.getByRole('button', { name: 'Сохранить визит', exact: true }).click();
     await expect(staff.page.getByText('Сумма чека: от 0,01 до 1 000 000 ₽.', { exact: true })).toBeVisible();
@@ -179,7 +187,7 @@ test('two phones share visits and reviews while guest cannot read internal notes
     await expect(guest.page.getByText('0 Б', { exact: true }).first()).toBeVisible();
     await owner.page.getByRole('tab', { name: 'Гости', exact: true }).click();
     await owner.page.getByRole('button', { name: 'Гость Гость Проверка', exact: true }).click();
-    await owner.page.getByRole('button', { name: 'Визит', exact: true }).click();
+    await owner.page.getByRole('button', { name: 'Отметить визит', exact: true }).click();
     await owner.page.getByLabel('Сумма чека, ₽', { exact: true }).fill('1000,50');
     await owner.page.getByLabel('Чаевые, ₽', { exact: true }).fill('150');
     await owner.page.getByRole('button', { name: 'Сохранить визит', exact: true }).click();
@@ -194,7 +202,7 @@ test('two phones share visits and reviews while guest cannot read internal notes
     await guest.page.getByRole('button', { name: 'Оставить отзыв', exact: true }).click();
     await guest.page.getByLabel('Ваш отзыв о заведении', { exact: true }).fill('Отзыв с другого телефона');
     await guest.page.getByRole('button', { name: 'Сохранить отзыв', exact: true }).click();
-    await close(owner.page); await owner.page.getByRole('tab', { name: 'Отзывы', exact: true }).click();
+    await close(owner.page); await owner.page.getByRole('tab', { name: 'Ещё', exact: true }).click(); await owner.page.getByRole('button', { name: 'Отзывы гостей', exact: true }).click();
     await expect(owner.page.getByText('Отзыв с другого телефона', { exact: true })).toBeVisible();
     const guestSession = await session(request, guestId); const guestState = await state(request, guestSession.token);
     expect(guestState.db.notes).toEqual([]); expect(guestState.db.guests).toHaveLength(1);
@@ -271,7 +279,7 @@ test('POS sandbox exercises both providers without writing fictional visits to l
     const account = await session(request, user); const before = await state(request, account.token);
     const mutations: string[] = [];
     owner.page.on('request', req => { if (req.url().endsWith('/api/commands')) mutations.push(req.postDataJSON()?.type); });
-    await owner.page.getByRole('button', { name: 'Открыть интеграции', exact: true }).click();
+    await profile(owner.page); await owner.page.getByRole('button', { name: 'Интеграции iiko и r_keeper', exact: true }).click();
     await owner.page.getByRole('button', { name: 'Открыть тестовую песочницу', exact: true }).click();
     for (const provider of ['iiko', 'r_keeper']) {
       await owner.page.getByRole('button', { name: `Демо ${provider}`, exact: true }).click();
@@ -306,7 +314,7 @@ test('320px: real POS setup stays a draft, masks keys and limits configuration t
     const otherVenue = await createForManager(request, foreign.token, 'Посторонний клуб');
     const posActions: string[] = [];
     owner.page.on('request', req => { if (req.method() === 'POST' && req.url().includes('/api/pos/')) posActions.push(new URL(req.url()).pathname); });
-    await owner.page.getByRole('button', { name: 'Открыть интеграции', exact: true }).click();
+    await profile(owner.page); await owner.page.getByRole('button', { name: 'Интеграции iiko и r_keeper', exact: true }).click();
     await expect(owner.page.getByText('Кассы пока не подключены', { exact: true })).toBeVisible();
     await expect(owner.page.getByRole('button', { name: 'Подготовить тестовый чек', exact: true })).toHaveCount(0);
     await expect(owner.page.getByText('Александр Миронов', { exact: true })).toHaveCount(0);
@@ -348,7 +356,7 @@ test('320px: real POS setup stays a draft, masks keys and limits configuration t
     expect(await owner.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await owner.page.screenshot({ path: resolve('../../work/pos-connections-320.png') });
     staff = await phone(browser, staffIdentity, 320);
-    await staff.page.getByRole('button', { name: 'Открыть интеграции', exact: true }).click();
+    await profile(staff.page); await staff.page.getByRole('button', { name: 'Интеграции iiko и r_keeper', exact: true }).click();
     await expect(staff.page.getByText('Требуется настройка', { exact: true })).toBeVisible();
     await expect(staff.page.getByRole('button', { name: 'Настроить iiko', exact: true })).toHaveCount(0);
     await expect(staff.page.getByRole('button', { name: 'Проверить iiko', exact: true })).toHaveCount(0);
@@ -374,7 +382,8 @@ test('lost award response remains idempotent after closing form and after page r
     const openAward = async (amount: string) => {
       await owner.page.getByRole('tab', { name: 'Гости', exact: true }).click();
       await owner.page.getByRole('button', { name: 'Гость Получатель Проверка', exact: true }).click();
-      await owner.page.getByRole('button', { name: 'Бонусы', exact: true }).click();
+      await owner.page.getByRole('button', { name: 'Бонусы и другие действия', exact: true }).click();
+      await owner.page.getByRole('button', { name: 'Начислить бонусы', exact: true }).click();
       await owner.page.getByLabel('Количество бонусов', { exact: true }).fill(amount);
     };
     const dropNext = new Set([100, 200]); let rateLimitNext = false;
@@ -550,4 +559,112 @@ test('320px: developer publishes individual venue cards, guest chooses first and
     }
     await developer.context.close(); await guest.context.close();
   }
+});
+
+for (const width of [320, 390]) test(`${width}px: staff card follows QR, numeric drafts clear and fields fit a short phone screen`, async ({ browser, request }) => {
+  const managerIdentity = identity(`Команда ${width}`);
+  const guestIdentity = identity(`Гость карточки ${width}`);
+  const manager = await session(request, managerIdentity);
+  const guest = await session(request, guestIdentity);
+  const created = await createForManager(request, manager.token, `Карточка ${width}`);
+  const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'addGuest', { venueId, guestCode: guest.guestCode });
+  await apiCommand(request, manager.token, 'recordVisit', { venueId, guestId: guest.guestId, bill: 1000, tips: 100, rating: 5 });
+  await apiCommand(request, manager.token, 'recordVisit', { venueId, guestId: guest.guestId, bill: 1500, tips: 0, rating: 4 });
+  await apiCommand(request, manager.token, 'addNote', { venueId, guestId: guest.guestId, kind: 'preference', text: 'Не остро, без кинзы. Любимый напиток — лимонад.' });
+  const employee = await phone(browser, managerIdentity, width);
+  try {
+    await expect(employee.page.getByRole('tab')).toHaveCount(3);
+    await expect(employee.page.getByRole('button', { name: 'Открыть интеграции', exact: true })).toHaveCount(0);
+    await employee.page.screenshot({ path: resolve(`../svoi-staff-home-${width}.png`) });
+    await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click();
+    await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode);
+    await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await expect(employee.page.getByText('Не остро, без кинзы. Любимый напиток — лимонад.', { exact: true })).toBeVisible();
+    await expect(employee.page.getByTestId('guest-visit-count').getByText('2', { exact: true })).toBeVisible();
+    await expect(employee.page.getByLabel('Сумма чека, ₽', { exact: true })).toHaveCount(0);
+    expect((await state(request, guest.token)).db.visits).toHaveLength(2);
+    await employee.page.screenshot({ path: resolve(`../svoi-staff-card-${width}.png`) });
+    await employee.page.getByRole('button', { name: 'Бонусы и другие действия', exact: true }).click();
+    await employee.page.getByRole('button', { name: 'Начислить бонусы', exact: true }).click();
+    const amount = employee.page.getByLabel('Количество бонусов', { exact: true });
+    await expect(amount).toHaveValue('');
+    await expect(employee.page.getByRole('button', { name: 'Подарить бонусы', exact: true })).toBeDisabled();
+    await amount.fill('0'); await amount.press('End'); await amount.pressSequentially('50');
+    await expect(amount).toHaveValue('50');
+    await amount.fill(''); await expect(amount).toHaveValue('');
+    await amount.fill('150');
+    await employee.page.setViewportSize({ width, height: 568 });
+    for (const label of ['Количество бонусов', 'За что благодарим']) {
+      const input = employee.page.getByLabel(label, { exact: true });
+      await input.scrollIntoViewIfNeeded();
+      const bounds = await input.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      expect(bounds!.height).toBeGreaterThanOrEqual(label === 'Количество бонусов' ? 56 : 112);
+      const textFits = await input.evaluate(element => {
+        const style = getComputedStyle(element);
+        return element.clientHeight >= parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      });
+      expect(textFits).toBe(true);
+    }
+    expect(await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await employee.page.screenshot({ path: resolve(`../svoi-staff-award-${width}.png`) });
+    await resultOf(employee.page, 'awardBonus', () => employee.page.getByRole('button', { name: 'Подарить бонусы', exact: true }).click());
+    await employee.page.getByRole('button', { name: 'Отметить визит', exact: true }).click();
+    const tips = employee.page.getByLabel('Чаевые, ₽', { exact: true });
+    await expect(tips).toHaveValue('');
+    await tips.fill('0'); await tips.fill(''); await expect(tips).toHaveValue('');
+    await employee.page.getByLabel('Сумма чека, ₽', { exact: true }).fill('700');
+    await resultOf(employee.page, 'recordVisit', () => employee.page.getByRole('button', { name: 'Сохранить визит', exact: true }).click());
+    const actual = await state(request, guest.token);
+    expect(actual.db.visits).toHaveLength(3);
+    expect(actual.db.visits.some((visit: { bill: number; tips: number }) => visit.bill === 700 && visit.tips === 0)).toBe(true);
+    expect(employee.errors).toEqual([]);
+  } finally { await employee.context.close(); }
+});
+
+for (const platform of ['android', 'ios']) test(`${platform}: iikoWaiter offers honest fallback and opens only the configured platform link`, async ({ browser, request }) => {
+  const managerIdentity = identity(`Команда iiko ${platform}`);
+  const manager = await session(request, managerIdentity);
+  const guest = await session(request, identity(`Гость iiko ${platform}`));
+  const venue = await createForManager(request, manager.token, `iiko ${platform}`);
+  const venueId = venue.result.venueId;
+  await apiCommand(request, manager.token, 'updateServiceFlow', { venueId, serviceFlow: { cashSystem: 'iiko', waiterAndroidUrl: '', waiterIosUrl: '' } });
+  const employee = await phone(browser, managerIdentity, 320);
+  try {
+    await employee.page.evaluate(platform => {
+      const app = (window as any).Telegram.WebApp;
+      app.platform = platform;
+      (window as any).__openedWaiterLinks = [];
+      app.openLink = (url: string) => (window as any).__openedWaiterLinks.push(url);
+    }, platform);
+    const openCard = async () => {
+      await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click();
+      await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode);
+      await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+      await expect(employee.page.getByText('Предпочтения гостя', { exact: true })).toBeVisible();
+    };
+    await openCard();
+    await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0);
+    await expect(employee.page.getByRole('button', { name: 'Отметить визит', exact: true })).toHaveCount(0);
+    await employee.page.getByRole('button', { name: 'Как перейти в iikoWaiter', exact: true }).click();
+    await expect(employee.page.getByText(/Сверните Telegram и откройте установленный iikoWaiter/)).toBeVisible();
+    await employee.page.getByRole('button', { name: `Установить iikoWaiter · ${platform === 'ios' ? 'App Store' : 'Google Play'}`, exact: true }).click();
+    const storeUrl = platform === 'ios' ? 'https://apps.apple.com/ru/app/iikowaiter-5/id641016373' : 'https://play.google.com/store/apps/details?id=ru.iiko.iikowaiter5';
+    expect(await employee.page.evaluate(() => (window as any).__openedWaiterLinks)).toEqual([storeUrl]);
+    await close(employee.page);
+    await profile(employee.page);
+    await employee.page.getByRole('button', { name: 'Обслуживание и iikoWaiter', exact: true }).click();
+    await employee.page.getByLabel('Ссылка открытия на Android', { exact: true }).fill('https://example.com/waiter/android');
+    await employee.page.getByLabel('Ссылка открытия на iPhone', { exact: true }).fill('https://example.com/waiter/ios');
+    await resultOf(employee.page, 'updateServiceFlow', () => employee.page.getByRole('button', { name: 'Сохранить сценарий', exact: true }).click());
+    await close(employee.page); await openCard();
+    await employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true }).click();
+    expect(await employee.page.evaluate(() => (window as any).__openedWaiterLinks)).toEqual([storeUrl, `https://example.com/waiter/${platform}`]);
+    expect((await state(request, guest.token)).db.visits).toHaveLength(0);
+    expect((await state(request, guest.token)).db.transactions).toHaveLength(0);
+    expect(employee.errors).toEqual([]);
+  } finally { await employee.context.close(); }
 });

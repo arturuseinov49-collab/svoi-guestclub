@@ -3,7 +3,6 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native
 import { Guest, Role, Venue, money, rewards, sameDay, shortDate, stats } from './domain';
 import { useStore } from './store';
 import { Avatar, Button, C, Callout, Empty, Icon, Pill, Section, Stars, Txt, fx, s } from './ui';
-import { GuestQr } from './qr';
 import { effectiveGuestProfile } from './venue-profile';
 export type ScreenActions = {
   venue: Venue; role: Role; go: (tab: number) => void; guest: (id: string) => void;
@@ -19,43 +18,27 @@ function GuestRow({ guest, venueId, onPress, compact = false }: { guest: Guest; 
     <View style={{ alignItems: 'flex-end', gap: 5 }}><View style={[s.row, { gap: 4 }]}><Icon name="star" size={12} color="#B98E4E" /><Txt weight="bold" style={{ fontSize: 12 }}>{st.rating ? st.rating.toFixed(1) : '—'}</Txt></View><Txt weight="semibold" style={{ fontSize: 11, color: C.muted }}>{money(st.balance)} Б</Txt></View><Icon name="chevron-forward" size={15} color="#A5AE9F" />
   </Pressable>;
 }
-function ClubStamp() {
-  return <View {...fx('foil')} pointerEvents="none" style={xs.clubStamp}><View style={xs.stampRing}><Icon name="sparkles" size={21} color={C.pine} /><Txt weight="extra" style={{ fontSize: 14, letterSpacing: -0.5 }}>СВОЙ</Txt><Txt weight="bold" style={{ fontSize: 6, letterSpacing: 0.9 }}>ПРОВЕРЕНО</Txt></View></View>;
-}
 export function Home(p: ScreenActions) {
-  const { db, guestId, guestCode, guestQr } = useStore();
-  const my = db.guests.find(g => g.id === guestId)!;
-  const st = stats(db, p.venue.id, guestId);
-  const guests = db.guests.filter(g => db.memberships.some(m => m.venueId === p.venue.id && m.guestId === g.id));
-  const today = db.visits.filter(v => v.venueId === p.venue.id && sameDay(v.createdAt));
-  const featured = [...guests].sort((a, b) => stats(db, p.venue.id, b.id).count - stats(db, p.venue.id, a.id).count).slice(0, 3);
-  const remaining = p.venue.program.everyVisits - st.count % p.venue.program.everyVisits;
-  const review = db.reviews.find(r => r.venueId === p.venue.id && (p.role === 'staff' || r.guestId === guestId));
-  const author = db.guests.find(g => g.id === review?.guestId);
+  const { db } = useStore();
+  const visits = db.visits.filter(visit => visit.venueId === p.venue.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const recentIds = [...new Set(visits.map(visit => visit.guestId))].slice(0, 3);
+  const recent = recentIds.map(id => db.guests.find(guest => guest.id === id)).filter((guest): guest is Guest => !!guest);
+  const today = visits.filter(visit => sameDay(visit.createdAt)).length;
   return <View style={s.page}>
-    <View style={{ gap: 10 }}><Txt weight="extra" style={s.eyebrow}>{new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()} / СВОЙ КРУГ</Txt><Txt weight="extra" style={s.title}>{p.role === 'staff' ? 'НЕ ПРОСТО\nГОСТИ. СВОИ.' : `${my.name.split(' ')[0].toUpperCase()},\nВЫ В КЛУБЕ.`}</Txt><Txt style={s.caption}>{p.role === 'staff' ? 'Замечаем людей. Возвращаем любовь бонусами.' : 'Привычка приходить. Привилегия быть своим.'}</Txt></View>
-    <View {...fx('hero')} style={xs.hero}>
-      <ClubStamp />
-      <View style={[s.row, { gap: 7, marginBottom: 15 }]}><View style={xs.liveDot} /><Txt numberOfLines={1} weight="extra" style={{ color: C.pine, fontSize: 9, letterSpacing: 1.3, flex: 1, minWidth: 0 }}>{p.role === 'staff' ? 'СВОИ / ГОСТЕВОЙ КЛУБ' : `ЛИЧНЫЙ СЧЁТ / ${p.venue.name.toUpperCase()}`}</Txt></View>
-      <Txt weight="extra" style={{ color: C.ink, fontSize: p.role === 'staff' ? 43 : 50, lineHeight: 44, letterSpacing: -2.1 }}>{p.role === 'staff' ? 'СВОИМ\nБОЛЬШЕ.' : `${money(st.balance)} Б`}</Txt>
-      <Txt style={{ color: C.pine, fontSize: 12, marginTop: 12, lineHeight: 20, maxWidth: '64%' }}>{p.role === 'staff' ? `${guests.length} гостей в вашем круге.\nКаждого есть за что ценить.` : 'Ваш баланс хороших привычек.\nМеняйте на приятное.'}</Txt>
-      <Pressable accessibilityRole="button" accessibilityLabel={p.role === 'staff' ? 'Открыть программу лояльности' : 'Выбрать комплимент'} onPress={() => p.go(2)} style={xs.heroLink}><Txt weight="extra" style={{ fontSize: 11, color: C.ink }}>{p.role === 'staff' ? 'В клуб привилегий' : 'Забрать комплимент'}</Txt><Icon name="arrow-forward" size={16} color={C.ink} /></Pressable>
-      <View style={xs.heroFooter}><Txt weight="bold" style={{ color: C.pine, fontSize: 9, lineHeight: 15, letterSpacing: 0.4, flex: 1 }}>{p.role === 'staff' ? 'ХОРОШЕЕ ВОЗВРАЩАЕТСЯ.' : `КЕШБЭК ${p.venue.program.cashback}% С КАЖДОГО ВИЗИТА`}</Txt><Txt weight="extra" style={{ color: C.ink, fontSize: 14 }}>свои ↗</Txt></View>
-    </View>
-    {p.role === 'staff' ? <>
-      <View style={{ flexDirection: 'row', gap: 12 }}><View {...fx('soft-card')} style={[xs.statCard, { flex: 1 }]}><View style={[s.row, { justifyContent: 'space-between' }]}><Icon name="footsteps-outline" size={18} color={C.muted} /><Pill label="сегодня" background={C.pale} /></View><Txt weight="extra" style={xs.statValue}>{today.length.toString().padStart(2, '0')}</Txt><Txt style={s.caption}>визита отмечено</Txt></View><View {...fx('soft-card')} style={[xs.statCard, { flex: 1 }]}><View style={[s.row, { justifyContent: 'space-between' }]}><Icon name="heart-outline" size={18} color={C.muted} /><Icon name="trending-up" size={17} color={C.pine} /></View><Txt weight="extra" style={xs.statValue}>{guests.filter(g => stats(db, p.venue.id, g.id).count >= 5).length.toString().padStart(2, '0')}</Txt><Txt style={s.caption}>постоянных гостя</Txt></View></View>
+    <View style={{ gap: 8 }}><Txt weight="bold" style={s.eyebrow}>ВАША СМЕНА</Txt><Txt weight="extra" style={s.title}>Встречаем{'\n'}гостей.</Txt><Txt style={s.caption}>Всё о госте — в одной карточке.</Txt></View>
+    <View {...fx('hero')} style={[s.card, { backgroundColor: C.lime, padding: 20, gap: 20 }]}>
+      <View style={[s.row, { gap: 14 }]}><View style={{ width: 62, height: 62, borderRadius: 20, backgroundColor: '#FFFFFF91', alignItems: 'center', justifyContent: 'center' }}><Icon name="qr-code-outline" size={34} color={C.pine} /></View><View style={{ flex: 1, gap: 5, minWidth: 0 }}><Txt weight="extra" style={{ fontSize: 19, lineHeight: 25 }}>Узнайте своего гостя</Txt><Txt style={{ fontSize: 12, color: C.pine, lineHeight: 19 }}>Предпочтения, прошлые визиты и бонусный счёт.</Txt></View></View>
       <Button label="Сканировать QR гостя" icon="scan-outline" onPress={p.scan} />
-      <Button label="Выбрать гостя вручную" icon="people-outline" variant="ghost" onPress={() => p.visit()} />
-      <View><Section title="Повод сказать спасибо" action="Все гости" onPress={() => p.go(1)} />{featured.length ? <View style={[s.card, { padding: 0, overflow: 'hidden' }]}>{featured.map((g, i) => <View key={g.id}>{i > 0 && <View style={xs.divider} />}<GuestRow guest={g} venueId={p.venue.id} onPress={() => p.guest(g.id)} compact /></View>)}</View> : <Empty title="Знакомство начинается с QR" text="Попросите гостя открыть личный QR в «Своих» и отсканируйте его. Затем подтвердите сумму чека — бонусы начислятся автоматически." />}</View>
-      <Pressable {...fx('foil')} accessibilityRole="button" accessibilityLabel="Начислить благодарность гостю" onPress={() => p.award()} style={xs.thanksBanner}><View style={xs.thanksIcon}><Icon name="gift-outline" size={23} color={C.orange} /></View><View style={{ flex: 1, gap: 4 }}><Txt weight="bold" style={{ fontSize: 13 }}>Хорошее стоит замечать</Txt><Txt style={{ fontSize: 11, color: C.muted }}>Подарите бонусы от команды</Txt></View><Icon name="arrow-forward" size={17} /></Pressable>
-    </> : <>
-      <GuestQr value={guestQr} code={guestCode} />
-      <View style={s.card}><View style={[s.row, { justifyContent: 'space-between', marginBottom: 16 }]}><Txt weight="bold">До нового «спасибо»</Txt><Pill label={`${st.count % p.venue.program.everyVisits} / ${p.venue.program.everyVisits} визитов`} /></View><View style={{ flexDirection: 'row', gap: 6 }}>{Array.from({ length: Math.min(p.venue.program.everyVisits, 10) }, (_, i) => <View key={i} style={{ height: 7, flex: 1, borderRadius: 4, backgroundColor: i < Math.floor((st.count % p.venue.program.everyVisits) / p.venue.program.everyVisits * Math.min(p.venue.program.everyVisits, 10)) ? C.pine : C.line }} />)}</View><Txt style={[s.caption, { marginTop: 12 }]}>Ещё {remaining} визита — и {p.venue.program.visitBonus} бонусов ваши.</Txt></View>
-      <View><Section title="Вам будет приятно" action="Все подарки" onPress={() => p.go(2)} /><RewardCard rewardId="coffee" balance={st.balance} onPress={() => p.redeem('coffee', guestId)} /></View>
-      <View style={[s.row, { gap: 12 }]}><View {...fx('soft-card')} style={[xs.statCard, { flex: 1 }]}><Icon name="footsteps-outline" size={20} /><Txt weight="extra" style={xs.statValue}>{st.count}</Txt><Txt style={s.caption}>визитов вместе</Txt></View><View {...fx('soft-card')} style={[xs.statCard, { flex: 1 }]}><Icon name="leaf-outline" size={20} /><Txt weight="extra" style={xs.statValue}>{p.venue.program.cashback}%</Txt><Txt style={s.caption}>возвращаем бонусами</Txt></View></View>
-    </>}
-    {review && author && <View><Section title="Слова, которые греют" action="Все отзывы" onPress={() => p.go(3)} /><View style={s.card}><Stars rating={review.rating} /><Txt style={{ lineHeight: 23, marginVertical: 13, fontSize: 13 }}>«{review.text}»</Txt><View style={[s.row, { gap: 10 }]}><Avatar guest={author} size={30} /><Txt weight="bold" style={{ flex: 1, fontSize: 11 }}>{author.name}</Txt><Txt style={{ fontSize: 10, color: C.muted }}>{shortDate(review.createdAt)}</Txt></View></View></View>}
-    <View style={[s.row, { justifyContent: 'center', gap: 6 }]}><Icon name="leaf-outline" size={13} color={C.muted} /><Txt style={{ fontSize: 10, color: C.muted }}>Место, где каждый — свой</Txt></View>
+      <Txt style={{ fontSize: 11, color: C.pine, lineHeight: 18 }}>Попросите гостя открыть личный QR в «Своих».</Txt>
+    </View>
+    <Pressable accessibilityRole="button" accessibilityLabel="Найти гостя вручную" onPress={() => p.go(1)} style={[s.row, { gap: 10, alignSelf: 'center', minHeight: 44 }]}><Icon name="search-outline" size={18} color={C.pine} /><Txt weight="bold" style={{ fontSize: 13, color: C.pine }}>Найти гостя вручную</Txt></Pressable>
+    <View style={[s.row, { gap: 8, flexWrap: 'wrap' }]}><Pill label={`Сегодня визитов: ${today}`} icon="footsteps-outline" /><Txt style={{ fontSize: 11, color: C.muted }}>Только подтверждённые посещения</Txt></View>
+    {!!recent.length && <View><Section title="Недавно были у нас" /> <View style={[s.card, { padding: 0, overflow: 'hidden' }]}>{recent.map((guest, index) => <View key={guest.id}>{index > 0 && <View style={xs.divider} />}<GuestRow guest={guest} venueId={p.venue.id} onPress={() => p.guest(guest.id)} compact /></View>)}</View></View>}
+  </View>;
+}
+export function StaffTools(p: ScreenActions) {
+  return <View style={s.page}><View style={{ gap: 8 }}><Txt weight="bold" style={s.eyebrow}>ДОПОЛНИТЕЛЬНО</Txt><Txt weight="extra" style={s.title}>Инструменты{'\n'}команды</Txt><Txt style={s.caption}>Для задач, которые возникают после встречи гостя.</Txt></View>
+    {[{ title: 'Бонусы и комплименты', text: 'Программа заведения и история операций', icon: 'gift-outline' as const, tab: 2 }, { title: 'Отзывы гостей', text: 'Впечатления и ответы команды', icon: 'chatbubbles-outline' as const, tab: 3 }].map(item => <Pressable key={item.tab} accessibilityRole="button" accessibilityLabel={item.title} onPress={() => p.go(item.tab)} style={[s.card, s.row, { gap: 14 }]}><Icon name={item.icon} color={C.pine} /><View style={{ flex: 1, minWidth: 0, gap: 5 }}><Txt weight="bold" style={{ fontSize: 15 }}>{item.title}</Txt><Txt style={s.caption}>{item.text}</Txt></View><Icon name="chevron-forward" size={18} color={C.muted} /></Pressable>)}
   </View>;
 }
 export function Guests(p: ScreenActions) {

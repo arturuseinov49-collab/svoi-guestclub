@@ -56,7 +56,8 @@ test('legacy Telegram scanner can recover after cancel and use a manual code wit
     await phone.page.evaluate(qr => (window as any).__scanCallbacks[0](qr), phone.guest.guestQr);
     await phone.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(phone.guest.guestCode);
     await phone.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
-    await expect(phone.page.getByLabel('Сумма чека, ₽', { exact: true })).toBeVisible();
+    await expect(phone.page.getByText('Предпочтения гостя', { exact: true })).toBeVisible();
+    await expect(phone.page.getByLabel('Сумма чека, ₽', { exact: true })).toHaveCount(0);
     expect(mutations).toEqual(['addGuest']);
     const response = await request.get('/api/state', { headers: { Authorization: `Bearer ${phone.guest.token}` } });
     const state = await response.json();

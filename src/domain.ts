@@ -1,10 +1,11 @@
 import { effectiveGuestProfile } from './venue-profile';
 import type { GuestVenueProfile } from './venue-profile';
+import type { ServiceFlow } from './service-flow';
 
 export type Role = 'staff' | 'guest';
 export type NoteKind = 'thanks' | 'preference' | 'note';
 export interface Program { cashback: number; everyVisits: number; visitBonus: number; tipsBonus: number }
-export interface Venue { id: string; name: string; kind: string; address: string; monogram: string; program: Program; guestProfile?: GuestVenueProfile }
+export interface Venue { id: string; name: string; kind: string; address: string; monogram: string; program: Program; guestProfile?: GuestVenueProfile; serviceFlow?: ServiceFlow }
 export interface Guest { id: string; name: string; phone: string; color: string; createdAt: string }
 export interface Membership { venueId: string; guestId: string; balance: number }
 export interface Visit { id: string; venueId: string; guestId: string; bill: number; tips: number; rating: number | null; createdAt: string; source?: 'iiko' | 'rkeeper'; externalId?: string; tipsKnown?: boolean }

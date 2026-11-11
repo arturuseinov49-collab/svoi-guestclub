@@ -10,6 +10,7 @@ export interface TelegramApp {
   HapticFeedback?: { notificationOccurred: (type: 'success' | 'error' | 'warning') => void };
   showScanQrPopup?: (params: { text?: string }, callback?: (value: string) => boolean | void) => void;
   closeScanQrPopup?: () => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
 }
 declare global { interface Window { Telegram?: { WebApp: TelegramApp } } }
 export function telegramApp() { return Platform.OS === 'web' && typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined; }
