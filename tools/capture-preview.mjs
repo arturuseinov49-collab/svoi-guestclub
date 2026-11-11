@@ -1,0 +1,33 @@
+import { chromium } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import sharp from 'sharp';
+await mkdir('previews', { recursive: true });
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+const page = await context.newPage();
+await page.goto('http://127.0.0.1:8081');
+await page.getByText('НЕ ПРОСТО\nГОСТИ. СВОИ.', { exact: true }).waitFor();
+await page.screenshot({ path: 'previews/01-staff.png' });
+await page.getByRole('tab', { name: 'Гости', exact: true }).click();
+await page.getByRole('button', { name: 'Гость Александр Миронов', exact: true }).click();
+await page.screenshot({ path: 'previews/02-guest-card.png' });
+await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+await page.getByRole('button', { name: 'Профиль и настройки', exact: true }).click();
+await page.getByRole('button', { name: 'Режим гостя', exact: true }).click();
+await page.screenshot({ path: 'previews/03-guest.png' });
+await page.getByRole('tab', { name: 'Бонусы', exact: true }).click();
+await page.screenshot({ path: 'previews/04-rewards.png' });
+await page.getByRole('button', { name: 'Профиль и настройки', exact: true }).click();
+await page.getByRole('button', { name: 'Режим сотрудника', exact: true }).click();
+await page.getByRole('button', { name: 'Открыть интеграции', exact: true }).click();
+for (const [provider, name] of [['iiko', '05-iiko'], ['r_keeper', '06-rkeeper']]) {
+  await page.getByRole('button', { name: `Демо ${provider}`, exact: true }).click();
+  await page.getByRole('button', { name: 'Подготовить тестовый чек', exact: true }).click();
+  await page.screenshot({ path: `previews/${name}.png` });
+}
+await browser.close();
+const names = ['01-staff', '03-guest', '05-iiko', '06-rkeeper'];
+const images = await Promise.all(names.map(async (name, i) => ({ input: await sharp(`previews/${name}.png`).resize(312, 675).png().toBuffer(), left: 30 + i * 336, top: 86 })));
+const labels = `<svg xmlns="http://www.w3.org/2000/svg" width="1398" height="800"><rect width="1398" height="800" fill="#E8ECE3"/><text x="30" y="42" font-family="Arial" font-weight="bold" font-size="24" fill="#234C3C">СВОИ</text><text x="112" y="42" font-family="Arial" font-size="16" fill="#5B7161">Мобильное приложение для гостей и команды заведения</text>${['Сотрудник', 'Гость', 'iiko · демо', 'r_keeper · демо'].map((label, i) => `<text x="${30 + i * 336}" y="74" font-family="Arial" font-size="13" fill="#234C3C">${label}</text>`).join('')}</svg>`;
+await sharp(Buffer.from(labels)).composite(images).png().toFile('../svoi-preview.png');
+console.log('6 screenshots and ../svoi-preview.png saved.');

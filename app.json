@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Свои",
+    "slug": "svoi-guests",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F1F1E8",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.svoi.guests.demo",
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
+    },
+    "android": {
+      "package": "com.svoi.guests.demo",
+      "adaptiveIcon": {
+        "backgroundColor": "#171916",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-sharing"
+    ]
+  }
+}

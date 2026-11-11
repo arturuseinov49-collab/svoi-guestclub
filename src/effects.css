@@ -1,0 +1,123 @@
+/* Small composited light sweeps. No JavaScript animation loops or layout animation. */
+[data-fx] { isolation: isolate; }
+[data-fx~="button"] { transition: box-shadow 200ms ease, opacity 180ms ease, transform 180ms ease; }
+[data-fx~="button"] > * { z-index: 2; }
+[data-fx~="primary"] {
+  background-image: radial-gradient(ellipse at 15% 0%, #76957a50, transparent 65%), linear-gradient(125deg, #2d5042, #263b36 62%, #474351);
+  box-shadow: inset 0 1px 0 #ffffff45, inset 0 -1px 0 #10251c70, 0 8px 20px #28473520;
+}
+[data-fx~="secondary"] {
+  background-image: linear-gradient(118deg, #e5f8be, #d4edb3 48%, #d3ebda 80%, #e5dcf3);
+  box-shadow: inset 0 1px 0 #ffffffe0, 0 4px 14px #52764013;
+}
+[data-fx~="button"]:not([data-fx~="ghost"]):not([data-fx~="inactive"])::after {
+  content: ''; position: absolute; z-index: 1; pointer-events: none;
+  inset: -100% -60%; border-radius: inherit;
+  background: linear-gradient(110deg, transparent 35%, #ffffff05 43%, #ffffff5c 48%, #f3dcff45 51%, transparent 59%);
+  transform: translate3d(-55%, 0, 0); opacity: 0;
+  animation: svoi-sheen 7.5s ease-in-out infinite;
+}
+[data-fx~="secondary"]::after { animation-delay: 1.4s !important; }
+[data-fx~="primary"]::after { background: linear-gradient(110deg, transparent 35%, #ffffff03 43%, #ffffff24 48%, #f3dcff20 51%, transparent 59%) !important; }
+@keyframes svoi-sheen {
+  0%, 9% { transform: translate3d(-55%, 0, 0); opacity: 0; }
+  13% { opacity: .9; }
+  34% { transform: translate3d(55%, 0, 0); opacity: .45; }
+  39%, 100% { transform: translate3d(55%, 0, 0); opacity: 0; }
+}
+[data-fx~="hero"] {
+  overflow: hidden;
+  background-image: radial-gradient(ellipse at 8% 5%, #ffffffcf 0%, transparent 52%), radial-gradient(ellipse at 100% 100%, #d9d0efc9, transparent 58%), linear-gradient(135deg, #e5f5c5, #d6edb2 55%, #d1ebd9);
+  box-shadow: inset 0 1px 0 #ffffffea, 0 14px 32px #58754d16;
+}
+[data-fx~="hero"]::before {
+  content: ''; position: absolute; pointer-events: none; z-index: -1;
+  width: 135%; height: 135%; left: -20%; top: -20%;
+  background: linear-gradient(120deg, transparent 25%, #ffffff5e 45%, #fff0 60%);
+  animation: svoi-pearl 13s ease-in-out infinite alternate;
+}
+@keyframes svoi-pearl { from { transform: translate3d(-16%, -8%, 0) rotate(-12deg); opacity: .4; } to { transform: translate3d(18%, 7%, 0) rotate(14deg); opacity: .85; } }
+[data-fx~="foil"] {
+  background-image: radial-gradient(circle at 25% 20%, #fffefae0, transparent 50%), linear-gradient(135deg, #ded0f3, #e8e1f4 35%, #c8e5db 65%, #efe7ba);
+  box-shadow: inset 0 1px 1px #ffffffd9, inset 0 -2px 3px #78669a18, 0 8px 20px #53476715;
+}
+[data-fx~="dark-card"], [data-fx~="brand"] {
+  background-image: radial-gradient(ellipse at 0% 0%, #89a58a50, transparent 70%), linear-gradient(125deg, #284b3f, #24372e 70%, #3f3a49);
+  box-shadow: inset 0 1px 0 #ffffff26, 0 6px 18px #233a231a;
+}
+[data-fx~="nav"] { background-image: linear-gradient(135deg, #2c4034, #1f3029); box-shadow: 0 -8px 30px #244a3d10, inset 0 1px 0 #ffffff1a; }
+[data-fx~="nav-active"] { background-image: linear-gradient(125deg, #e6f8c5, #d3efb0 58%, #d6e8e0); box-shadow: inset 0 1px 0 #ffffffa0, 0 2px 8px #0c211d30; }
+[data-fx~="icon-button"] { box-shadow: 0 3px 10px #233b2709, inset 0 1px 0 white; transition: transform 180ms ease; }
+[data-fx~="soft-card"] { box-shadow: 0 6px 22px #254b3210, inset 0 1px 0 #ffffffbd; }
+[data-fx~="elpastor"] {
+  background-image: radial-gradient(ellipse at 10% 0%, #cc3b383d, transparent 65%), linear-gradient(125deg, #891a28, #580d20 45%, #2f0916);
+  box-shadow: inset 0 1px 0 #f8d9a84a, inset 0 -1px 0 #12040a70, 0 14px 32px #4c11152b;
+}
+[data-fx~="elpastor"]::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(30deg, #e9bf8a08 12%, transparent 12.5%, transparent 87%, #e9bf8a08 87.5%), linear-gradient(150deg, #e9bf8a08 12%, transparent 12.5%, transparent 87%, #e9bf8a08 87.5%);
+  background-size: 48px 82px;
+  mask-image: linear-gradient(90deg, black, transparent 46%, black);
+}
+[data-fx~="elpastor"]::after {
+  content: ''; position: absolute; inset: -65% -90%; pointer-events: none; z-index: 1;
+  background: linear-gradient(112deg, transparent 40%, #ffe5b300 44%, #ffe5b315 48%, #fff2cf26 50%, #e9bf8a0c 53%, transparent 58%);
+  animation: elpastor-light 10s ease-in-out infinite;
+}
+[data-fx~="elpastor-glow"] {
+  background: radial-gradient(circle, #f2aa6e55, #e25b3518 44%, transparent 70%);
+  animation: elpastor-glow 9s ease-in-out infinite alternate;
+}
+[data-fx~="elpastor-frame"]::before, [data-fx~="elpastor-frame"]::after {
+  content: ''; position: absolute; width: 4px; height: 4px; background: #e9bf8a; transform: rotate(45deg); top: 50%; opacity: .65;
+}
+[data-fx~="elpastor-frame"]::before { left: -2px; }
+[data-fx~="elpastor-frame"]::after { right: -2px; }
+[data-fx~="elpastor-orbit"]::before, [data-fx~="elpastor-orbit"]::after {
+  content: ''; position: absolute; inset: 12px; border: 1px solid #e9bf8a1a; border-radius: 50%;
+}
+[data-fx~="elpastor-orbit"]::after { inset: 24px; }
+[data-fx~="elpastor-type"] { text-shadow: 0 2px 0 #27081166; }
+[data-fx~="elpastor-tile"] { background: #fffcf6 !important; border-color: #e6d7c3 !important; box-shadow: 0 10px 30px #4b18251c !important; transition: transform 180ms ease, box-shadow 180ms ease; }
+[data-fx~="elpastor-page"] { background-color: #210911 !important; background-image: radial-gradient(ellipse at 90% 0%, #6e24391c, transparent 60%); }
+[data-fx~="elpastor-page"] [data-fx~="primary"] {
+  background-image: linear-gradient(120deg, #942d39, #651526 62%, #400d20);
+  border-color: #b8676740 !important; box-shadow: inset 0 1px 0 #ffdeb54d, 0 8px 22px #60162924;
+}
+[data-fx~="elpastor-page"] [data-fx~="secondary"] { background-image: linear-gradient(120deg, #f8e5c6, #f0d5b5 55%, #f3e7d9); box-shadow: inset 0 1px 0 #fff9ed, 0 4px 14px #6a3a2812; }
+[data-fx~="elpastor-page"] [data-fx~="nav"] { background-image: linear-gradient(120deg, #4b1421, #2d0a17); }
+[data-fx~="elpastor-page"] [data-fx~="nav"] [role="tab"] * { color: #f1d7ac !important; }
+[data-fx~="club-icon"] { box-shadow: inset 0 1px 0 #e6bb8e12; transition: opacity 160ms ease; }
+[data-fx~="club-button"] { isolation: isolate; transition: transform 160ms ease, opacity 160ms ease; }
+[data-fx~="club-button"] > * { z-index: 2; }
+[data-fx~="club-wine"] { background-image: radial-gradient(ellipse at 0 0, #a0444338, transparent 60%), linear-gradient(120deg, #5e1c2c, #3e101f); box-shadow: inset 0 1px 0 #f8d9a81a, 0 8px 18px #13040b18; }
+[data-fx~="club-gold"] { background-image: linear-gradient(110deg, #f7dfb7, #e7bd91 65%, #f2d6ae); box-shadow: inset 0 1px 0 #fff2d6, 0 6px 20px #0b010d35; }
+[data-fx~="club-gold"]::after {
+  content: ''; position: absolute; inset: -100% -60%; pointer-events: none; z-index: 1;
+  background: linear-gradient(110deg, transparent 40%, #fff7dc55 49%, transparent 58%);
+  animation: svoi-sheen 10s ease-in-out infinite;
+}
+[data-fx~="club-panel"], [data-fx~="club-sheet"] { background-image: radial-gradient(ellipse at 0 0, #80334a14, transparent 65%); box-shadow: inset 0 1px 0 #f8d9a81a; }
+[data-fx~="elpastor-page"] [role="button"]:focus-visible, [data-fx~="club-sheet"] [role="button"]:focus-visible { outline-color: #e6bb8e; }
+@keyframes elpastor-light {
+  0%, 12% { transform: translate3d(-32%, 0, 0); opacity: 0; }
+  20% { opacity: .65; }
+  60% { transform: translate3d(32%, 0, 0); opacity: .4; }
+  72%, 100% { transform: translate3d(32%, 0, 0); opacity: 0; }
+}
+@keyframes elpastor-glow {
+  from { transform: translate3d(0, 0, 0); opacity: .55; }
+  to { transform: translate3d(65px, 25px, 0); opacity: .95; }
+}
+input:focus-visible, textarea:focus-visible { outline: 2px solid #88ad6c !important; outline-offset: 2px; }
+[role="button"]:focus-visible, [role="tab"]:focus-visible { outline: 2px solid #88ad6c; outline-offset: 3px; }
+@media (hover:hover) {
+  [data-fx~="button"]:not([data-fx~="inactive"]):hover { box-shadow: inset 0 1px 0 #ffffff60, 0 9px 24px #28473526; }
+  [data-fx~="ghost"]:hover { background-color: #edf1e5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-fx], [data-fx]::before, [data-fx]::after { animation: none !important; transition: none !important; }
+  [data-fx~="button"]::after { opacity: 0 !important; }
+  [data-fx~="elpastor"]::after { opacity: 0 !important; }
+  [data-fx~="club-gold"]::after { opacity: 0 !important; }
+}

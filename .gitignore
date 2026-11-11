@@ -1,0 +1,89 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# Secrets and local environment (only the blank example is versioned)
+.env*
+!.env.example
+secrets/
+*.secret
+*.secret.*
+
+# Runtime state and backups
+data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+backups/
+*.log
+bot-offset.json
+
+# Local agent/session metadata
+.openai/
+.claude/
+.codex/
+
+# Generated checks, temporary files and deployment archives
+.cache/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+previews/
+__pycache__/
+*.py[cod]
+*.tmp
+*.bak
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# Private business documents and local-only project notes
+/docs/business/
+AGENTS.md
+private/
+.private/
+work/
+*.bundle
