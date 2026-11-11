@@ -1,100 +1,46 @@
-name: Source checks and verified release
+name: Temporary VPS network diagnostic
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
-concurrency:
-  group: source-checks-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+permissions: {}
 
 jobs:
-  check:
+  probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: '22.22.0'
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - name: Deployment safety tests
-        run: python3 -m unittest discover -s tests/deploy -v
-      - name: Check bootstrap shell syntax
-        run: bash -n deploy/install-autodeploy.sh
-      - run: npm run build
-      - name: Package the exact checked commit
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: python3 deploy/package_release.py --output release
-      - name: Pass release files to isolated publishing job
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: svoi-release-${{ github.sha }}
-          path: release/*
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      # No checkout, npm install, application scripts or PR code in this job.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: svoi-release-${{ github.sha }}
-          path: release
-          digest-mismatch: error
-      - name: Verify the transfer without executing artifact code
-        env:
-          EXPECTED_COMMIT: ${{ github.sha }}
-          EXPECTED_REPOSITORY: ${{ github.repository }}
-          EXPECTED_RUN: ${{ github.run_id }}
+      - name: Read SSH banner and HTTPS health status
         run: |
           python3 - <<'PY'
-          import hashlib, json, os
-          from pathlib import Path
-          folder = Path('release')
-          expected = f"svoi-{os.environ['EXPECTED_COMMIT']}.tar.gz"
-          assert {p.name for p in folder.iterdir()} == {'release.json', expected}
-          assert all(p.is_file() and not p.is_symlink() for p in folder.iterdir())
-          manifest = json.loads((folder/'release.json').read_text())
-          assert manifest['repository'] == os.environ['EXPECTED_REPOSITORY']
-          assert manifest['commit'] == os.environ['EXPECTED_COMMIT']
-          assert manifest['workflowRunId'] == int(os.environ['EXPECTED_RUN'])
-          assert manifest['formatVersion'] == 1 and manifest['databaseSchema'] == 2
-          archive = folder/expected
-          assert manifest['archive']['name'] == expected
-          assert archive.stat().st_size == manifest['archive']['bytes']
-          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest['archive']['sha256']
-          PY
-      - name: Publish immutable release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          COMMIT: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          gh --version
-          gh release create "deploy-${COMMIT}" \
-            --repo "$REPOSITORY" --target "$COMMIT" --latest \
-            --title "Свои ${COMMIT:0:12}" \
-            --notes 'Verified main build. VPS checks the completed workflow, manifest and all file digests before activation. Database schema remains version 2.' \
-            "release/release.json" "release/svoi-${COMMIT}.tar.gz"
+          import json
+          import socket
+          import urllib.error
+          import urllib.request
 
-# VPS downloads only public GitHub release assets, anonymously.
-# No VPS/Telegram/POS credentials enter Actions. Releases are never overwritten.
+          try:
+              with socket.create_connection(('185.72.146.214', 22), timeout=8) as connection:
+                  connection.settimeout(8)
+                  print(json.dumps({'check': 'ssh', 'connected': True}), flush=True)
+                  try:
+                      banner = connection.recv(256)
+                      if banner.startswith(b'SSH-'):
+                          first_line = banner.splitlines()[0].decode('ascii', errors='replace')
+                          safe = ''.join(c if 32 <= ord(c) <= 126 else '?' for c in first_line)
+                          print(json.dumps({'check': 'ssh_banner', 'banner': safe}), flush=True)
+                      else:
+                          print(json.dumps({'check': 'ssh_banner', 'errorType': 'EOFBeforeSSHBanner' if not banner else 'NonSSHData'}), flush=True)
+                  except Exception as error:
+                      print(json.dumps({'check': 'ssh_banner', 'errorType': type(error).__name__}), flush=True)
+          except Exception as error:
+              print(json.dumps({'check': 'ssh', 'connected': False, 'errorType': type(error).__name__}), flush=True)
+
+          try:
+              request = urllib.request.Request('https://svoi.185-72-146-214.sslip.io/api/health', headers={'User-Agent': 'svoi-network-diagnostic'})
+              with urllib.request.urlopen(request, timeout=8) as response:
+                  print(json.dumps({'check': 'https_health', 'status': response.status}), flush=True)
+          except urllib.error.HTTPError as error:
+              print(json.dumps({'check': 'https_health', 'status': error.code}), flush=True)
+          except Exception as error:
+              print(json.dumps({'check': 'https_health', 'errorType': type(error).__name__}), flush=True)
+          PY
