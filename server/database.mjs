@@ -41,6 +41,11 @@ export class Store {
     this.clock = clock; this.developerIds = developerAllowlist(developerIds);
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.sql = new DatabaseSync(path);
+    const schema = this.sql.prepare('PRAGMA user_version').get().user_version;
+    if (![0, 1, 2].includes(schema)) {
+      this.sql.close();
+      throw new Error('Unsupported database schema; manual migration is required');
+    }
     this.sql.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, username TEXT, guest_id TEXT NOT NULL UNIQUE, guest_code TEXT NOT NULL UNIQUE);

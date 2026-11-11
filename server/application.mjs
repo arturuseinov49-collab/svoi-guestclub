@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import { validateInitData } from './telegram-auth.mjs';
 import { Store, ApiError } from './database.mjs';
 import { PosRuntime } from './pos/runtime.mjs';
+import { readReleaseInfo } from './release-info.mjs';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ttf': 'font/ttf', '.ico': 'image/x-icon', '.svg': 'image/svg+xml' };
 function json(response, status, value) {
@@ -20,6 +21,7 @@ async function readBody(request, { maxSize = 20000, array = false } = {}) {
   catch { throw new ApiError(400, 'Некорректный JSON'); }
 }
 export function createApplication({ dataPath = process.env.DATABASE_PATH || process.env.DATA_PATH || resolve('data/svoi.sqlite'), botToken = process.env.TELEGRAM_BOT_TOKEN, publicUrl = process.env.PUBLIC_APP_URL, root = fileURLToPath(new URL('../dist/', import.meta.url)), clock = Date.now, rateLimits = true, posOptions = {}, developerIds = process.env.DEVELOPER_TELEGRAM_IDS || [] } = {}) {
+  const release = readReleaseInfo();
   const store = new Store(dataPath, { clock, developerIds }); const attempts = new Map(); const allowedOrigin = publicUrl ? new URL(publicUrl).origin : null;
   const pos = new PosRuntime(store, { publicUrl, clock, ...posOptions });
   function rate(key, limit) {
@@ -34,7 +36,11 @@ export function createApplication({ dataPath = process.env.DATABASE_PATH || proc
     let pathname;
     try {
       pathname = new URL(request.url, 'http://localhost').pathname;
-      if (pathname === '/api/health' && request.method === 'GET') { json(response, 200, { app: 'svoi-telegram', mode: 'live', database: 'ready', telegramAuthConfigured: !!botToken }); return; }
+      if (pathname === '/api/health' && request.method === 'GET') {
+        const databaseSchema = store.sql.prepare('PRAGMA user_version').get().user_version;
+        store.sql.prepare('SELECT id FROM app_state WHERE id=1').get();
+        json(response, 200, { app: 'svoi-telegram', mode: 'live', database: 'ready', databaseSchema, release, telegramAuthConfigured: !!botToken }); return;
+      }
       const webhookMatch = /^\/api\/pos\/webhooks\/iiko\/([a-f0-9-]{36})$/.exec(pathname);
       if (webhookMatch && request.method === 'POST') {
         if (request.headers.origin) throw new ApiError(403, 'Ожидается серверное кассовое событие');
