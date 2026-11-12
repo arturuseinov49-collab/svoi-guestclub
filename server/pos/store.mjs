@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ApiError } from '../database.mjs';
 import { recordVisit } from '../domain.mjs';
+import { creditGlobalPosCashback } from '../global-bonuses.mjs';
 
 const providers = new Set(['iiko', 'rkeeper']);
 const receiptStates = new Set(['paid', 'open', 'refund', 'review']);
@@ -152,7 +153,9 @@ export class PosStore {
       else {
         const result = recordVisit(db, { venueId: connection.venueId, guestId, bill: receipt.billMinor / 100, tips: 0, tipsKnown: false, rating: null,
           source: receipt.provider, externalId: `${receipt.scope}:${receipt.externalId}` }, receipt.closedAt);
-        this.store.write(result.db); earned = result.earned; visitId = result.db.visits[0].id; creditedFingerprint = fingerprint; creditedReceipt = JSON.stringify(receipt); outcome = 'imported';
+        const next = creditGlobalPosCashback(result.db, { id: randomUUID(), venueId: connection.venueId, guestId, provider: receipt.provider,
+          connectionId: connection.id, externalId: receipt.externalId, billMinor: receipt.billMinor, createdAt: receipt.closedAt });
+        this.store.write(next); earned = result.earned; visitId = result.db.visits[0].id; creditedFingerprint = fingerprint; creditedReceipt = JSON.stringify(receipt); outcome = 'imported';
       }
     }
     this.sql.prepare(`INSERT INTO pos_orders(connection_id,external_id,receipt,fingerprint,outcome,guest_id,visit_id,earned,credited_fingerprint,credited_receipt,created_at,updated_at)

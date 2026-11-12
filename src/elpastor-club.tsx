@@ -4,6 +4,7 @@ import { Venue, money } from './domain';
 import { effectiveGuestProfile } from './venue-profile';
 import { ElpastorArt } from './elpastor-art';
 import { Icon, IconName, Txt, fx } from './ui';
+import { GlobalWalletCard } from './bonus-ui';
 
 export const EP = { bg: '#210911', surface: '#350F1C', cream: '#FFF1DA', gold: '#E6BB8E', muted: '#C5A995', border: '#75404A' };
 
@@ -26,9 +27,9 @@ export function ClubNotice({ children }: React.PropsWithChildren) {
 }
 
 type GuestTab = 'home' | 'visits' | 'bonuses' | 'reviews';
-type Props = { venue: Venue; guestName: string; balance: number; tabs: { id: GuestTab; title: string; icon: IconName }[]; onQr: () => void; onTab: (tab: GuestTab) => void; onLink: (url: string) => void };
+type Props = { venue: Venue; guestName: string; balance: number; globalBalance: number | null; globalCaption: string; globalPendingReview?: boolean; onGlobal: () => void; tabs: { id: GuestTab; title: string; icon: IconName }[]; onQr: () => void; onTab: (tab: GuestTab) => void; onLink: (url: string) => void };
 
-export function ElpastorClubPage({ venue, guestName, balance, tabs, onQr, onTab, onLink }: Props) {
+export function ElpastorClubPage({ venue, guestName, balance, globalBalance, globalCaption, globalPendingReview, onGlobal, tabs, onQr, onTab, onLink }: Props) {
   const profile = effectiveGuestProfile(venue);
   return <View testID="elpastor-club-page" style={c.page}>
     <View style={c.clubCard}>
@@ -48,7 +49,8 @@ export function ElpastorClubPage({ venue, guestName, balance, tabs, onQr, onTab,
       ] as const).map(([key, label, subtitle, icon]) => profile.links[key] ? <ClubButton key={key} label={label} subtitle={subtitle} icon={icon} onPress={() => onLink(profile.links[key]!)} /> : null)}
     </View>
     {profile.demo && <ClubNotice>Тестовая карточка. Условия клуба ещё не согласованы с заведением.</ClubNotice>}
-    {profile.features.loyalty && <Pressable {...fx('club-panel')} accessibilityRole="button" accessibilityLabel="Открыть мои бонусы" onPress={() => onTab('bonuses')} style={c.panel}><Txt style={c.eyebrow}>ВАШИ БОНУСЫ В «{venue.name.toUpperCase()}»</Txt><Txt style={{ fontFamily: 'CormorantGaramondBold', fontSize: 38, color: EP.cream }}>{money(balance)} Б</Txt><Txt style={c.body}>Условия начисления и комплименты →</Txt></Pressable>}
+    {profile.features.loyalty && <Pressable {...fx('club-panel')} accessibilityRole="button" accessibilityLabel="Открыть мои бонусы" onPress={() => onTab('bonuses')} style={c.panel}><Txt style={c.eyebrow}>БОНУСЫ ЗАВЕДЕНИЯ</Txt><Txt style={{ fontFamily: 'CormorantGaramondBold', fontSize: 38, color: EP.cream }}>{money(balance)} Б</Txt><Txt style={c.body}>Действуют в «{venue.name}». Условия и комплименты →</Txt></Pressable>}
+    <GlobalWalletCard balance={globalBalance} caption={globalCaption} pendingReview={globalPendingReview} onPress={onGlobal} theme="elpastor" />
     <View style={{ gap: 14 }}><Txt style={c.heading}>Hola, amigo</Txt>{!!profile.description && <Txt style={c.body}>{profile.description}</Txt>}<View style={c.highlights}>{profile.highlights.map(label => <View key={label} style={c.chip}><Txt style={{ fontSize: 10, lineHeight: 16, color: EP.gold }}>{label}</Txt></View>)}</View>
       {([
         ['vk', 'Заведение ВКонтакте', 'people-outline'], ['website', 'Сайт заведения', 'globe-outline'],

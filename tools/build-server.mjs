@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import { readFile, writeFile } from 'node:fs/promises';
 // The same pure, validated business rules run on the server. No runtime TS dependency.
-for (const name of ['venue-profile', 'service-flow', 'domain']) {
+for (const name of ['venue-profile', 'service-flow', 'global-bonuses', 'domain']) {
   const source = await readFile(new URL(`../src/${name}.ts`, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const code = output.outputText.replaceAll("'./venue-profile'", "'./venue-profile.mjs'");

@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { recordVisit, awardBonus, addNote, addReview, replyReview, redeemReward, validateProgram } from './domain.mjs';
 import { effectiveGuestProfile, validateGuestProfile } from './venue-profile.mjs';
 import { validateServiceFlow } from './service-flow.mjs';
+import { GLOBAL_PROGRAM, globalBalances, guestGlobalWallet } from './global-bonuses.mjs';
 
 const empty = () => ({ version: 1, venues: [], guests: [], memberships: [], visits: [], notes: [], reviews: [], transactions: [], posEvents: [] });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -126,7 +127,14 @@ export class Store {
     const member = new Set(db.memberships.filter(item => item.guestId === row.guest_id).map(item => item.venueId));
     const visible = item => permitted.has(item.venueId) || (item.guestId === row.guest_id && member.has(item.venueId));
     const memberships = db.memberships.filter(visible); const guestIds = new Set([row.guest_id, ...memberships.map(item => item.guestId)]);
+    const balances = globalBalances(db);
+    // POS holds already persist reconciliation state; do not create a new schema
+    // or reveal which other venue produced a hold in a guest's global wallet.
+    const hasPosHolds = this.sql.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pos_guest_holds'").get();
+    const pendingReview = !!(hasPosHolds && this.sql.prepare('SELECT 1 FROM pos_guest_holds WHERE guest_id=? LIMIT 1').get(row.guest_id));
     return { user: { id: row.id, firstName: row.first_name, lastName: row.last_name, username: row.username }, guestId: row.guest_id, guestCode: row.guest_code, guestQr: qrPrefix + row.guest_qr, isDeveloper: this.isDeveloper(userId), staffVenues,
+      globalProgram: { ...GLOBAL_PROGRAM }, globalWallet: guestGlobalWallet(db, row.guest_id, pendingReview, balances),
+      guestGlobalBalances: db.memberships.filter(item => permitted.has(item.venueId)).map(({ venueId, guestId }) => ({ venueId, guestId, balance: balances.get(guestId) ?? 0 })),
       catalog: db.venues.filter(venue => effectiveGuestProfile(venue).published).map(catalogVenue),
       db: { version: 1,
         venues: db.venues.filter(venue => permitted.has(venue.id) || member.has(venue.id)).map(venue => { const { joinCode, serviceFlow, ...publicVenue } = venue; return permitted.has(venue.id) ? venue : publicVenue; }),

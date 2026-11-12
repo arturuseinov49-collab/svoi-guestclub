@@ -1,12 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Database, Venue } from './domain';
+import type { GlobalProgram, GlobalWallet, GuestGlobalBalance } from './domain';
 import { GuestVenueProfile } from './venue-profile';
 import { telegramApp } from './telegram';
 import { PendingOperations } from './pending';
 
 export interface Account { id: number; firstName: string; lastName: string; username: string | null }
 export interface StaffVenue { venueId: string; role: 'owner' | 'staff' }
-export interface Snapshot { db: Database; catalog: Venue[]; user: Account; guestId: string; guestCode: string; guestQr: string; isDeveloper: boolean; staffVenues: StaffVenue[] }
+export interface Snapshot {
+  db: Database; catalog: Venue[]; user: Account; guestId: string; guestCode: string; guestQr: string; isDeveloper: boolean; staffVenues: StaffVenue[];
+  globalProgram?: GlobalProgram | null;
+  globalWallet?: GlobalWallet | null;
+  guestGlobalBalances?: GuestGlobalBalance[];
+}
 export interface StaffMember { userId: number; name: string; role: 'owner' | 'staff' }
 export interface ManagedVenue { id: string; name: string; kind: string; address: string; joinCode: string; guestProfile: GuestVenueProfile; managers: { userId: number; name: string }[]; guestCount: number; staffCount: number }
 export interface CommandResult { venueId?: string; guestId?: string; earned?: number; code?: string; expiresAt?: string; members?: StaffMember[]; managedVenues?: ManagedVenue[] }
@@ -15,6 +21,7 @@ export type PosAction = 'status' | 'configure' | 'probe' | 'enabled' | 'bind' | 
 const emptyDatabase = (): Database => ({ version: 1, venues: [], guests: [], memberships: [], visits: [], notes: [], reviews: [], transactions: [] });
 type Store = {
   db: Database; catalog: Venue[]; user: Account | null; guestId: string; guestCode: string; guestQr: string; isDeveloper: boolean; staffVenues: StaffVenue[];
+  globalProgram: GlobalProgram | null; globalWallet: GlobalWallet | null; guestGlobalBalances: GuestGlobalBalance[];
   ready: boolean; loading: boolean; error: string; syncError: string; lastSynced: number;
   retry: () => Promise<void>; refresh: () => Promise<void>; logout: () => Promise<void>;
   command: (input: Command, idempotencyKey: string) => Promise<CommandResult>;
@@ -150,6 +157,6 @@ export function StoreProvider({ children }: React.PropsWithChildren) {
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', tick);
     };
   }, [refresh]);
-  return <Context.Provider value={{ db: snapshot?.db ?? emptyDatabase(), catalog: snapshot?.catalog ?? [], user: snapshot?.user ?? null, guestId: snapshot?.guestId ?? '', guestCode: snapshot?.guestCode ?? '', guestQr: snapshot?.guestQr ?? '', isDeveloper: snapshot?.isDeveloper === true, staffVenues: snapshot?.staffVenues ?? [], ready: !!snapshot, loading, error, syncError, lastSynced, retry, refresh, logout, command, posRequest }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ db: snapshot?.db ?? emptyDatabase(), catalog: snapshot?.catalog ?? [], user: snapshot?.user ?? null, guestId: snapshot?.guestId ?? '', guestCode: snapshot?.guestCode ?? '', guestQr: snapshot?.guestQr ?? '', isDeveloper: snapshot?.isDeveloper === true, staffVenues: snapshot?.staffVenues ?? [], globalProgram: snapshot?.globalProgram ?? null, globalWallet: snapshot?.globalWallet ?? null, guestGlobalBalances: snapshot?.guestGlobalBalances ?? [], ready: !!snapshot, loading, error, syncError, lastSynced, retry, refresh, logout, command, posRequest }}>{children}</Context.Provider>;
 }
 export function useStore() { const value = useContext(Context); if (!value) throw new Error('StoreProvider missing'); return value; }

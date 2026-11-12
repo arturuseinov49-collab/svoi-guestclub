@@ -383,7 +383,7 @@ test('lost award response remains idempotent after closing form and after page r
       await owner.page.getByRole('tab', { name: 'Гости', exact: true }).click();
       await owner.page.getByRole('button', { name: 'Гость Получатель Проверка', exact: true }).click();
       await owner.page.getByRole('button', { name: 'Бонусы и другие действия', exact: true }).click();
-      await owner.page.getByRole('button', { name: 'Начислить бонусы', exact: true }).click();
+      await owner.page.getByRole('button', { name: 'Начислить бонусы заведения', exact: true }).click();
       await owner.page.getByLabel('Количество бонусов', { exact: true }).fill(amount);
     };
     const dropNext = new Set([100, 200]); let rateLimitNext = false;
@@ -586,7 +586,7 @@ for (const width of [320, 390]) test(`${width}px: staff card follows QR, numeric
     expect((await state(request, guest.token)).db.visits).toHaveLength(2);
     await employee.page.screenshot({ path: resolve(`../svoi-staff-card-${width}.png`) });
     await employee.page.getByRole('button', { name: 'Бонусы и другие действия', exact: true }).click();
-    await employee.page.getByRole('button', { name: 'Начислить бонусы', exact: true }).click();
+    await employee.page.getByRole('button', { name: 'Начислить бонусы заведения', exact: true }).click();
     const amount = employee.page.getByLabel('Количество бонусов', { exact: true });
     await expect(amount).toHaveValue('');
     await expect(employee.page.getByRole('button', { name: 'Подарить бонусы', exact: true })).toBeDisabled();
@@ -667,4 +667,101 @@ for (const platform of ['android', 'ios']) test(`${platform}: iikoWaiter offers 
     expect((await state(request, guest.token)).db.transactions).toHaveLength(0);
     expect(employee.errors).toEqual([]);
   } finally { await employee.context.close(); }
+});
+
+
+test('320px: global leaf wallet stays separate from venue balances and staff sees no guest ledger', async ({ browser, request }) => {
+  const managerIdentity = identity('Команда двух счетов');
+  const guestIdentity = identity('Гость двух счетов');
+  const manager = await session(request, managerIdentity);
+  const guestAccount = await session(request, guestIdentity);
+  const first = await createForManager(request, manager.token, 'Кафе двух счетов');
+  const second = await createForManager(request, manager.token, 'Эль Пастор · два счёта');
+  const admin = await session(request, developerIdentity);
+  await apiCommand(request, admin.token, 'updateVenueProfile', { venueId: second.result.venueId, guestProfile: { published: true, demo: true, theme: 'elpastor', tagline: 'Мексиканский гастробар', description: 'Тест отображения двух независимых счетов.', highlights: ['Мексиканская кухня'], terms: 'Условия тестовой карточки.', links: {}, features: { loyalty: true, visits: true, reviews: true } } });
+  for (const [venueId, amount] of [[first.result.venueId, 100], [second.result.venueId, 200]] as const) {
+    await apiCommand(request, manager.token, 'addGuest', { venueId, guestCode: guestAccount.guestCode });
+    await apiCommand(request, manager.token, 'awardBonus', { venueId, guestId: guestAccount.guestId, amount, reason: 'Локальная благодарность' });
+  }
+  const guest = await phone(browser, guestIdentity, 320);
+  const employee = await phone(browser, managerIdentity, 320);
+  const program = { enabled: true, cashbackPercent: 1, redemptionEnabled: false };
+  // UI fixtures model an already-verified POS snapshot. Backend tests separately
+  // exercise real receipt ingestion, arithmetic, replay protection and isolation.
+  const entry = { id: 'ui-paid-receipt', delta: 34, reason: 'Глобальное начисление по оплаченному чеку', createdAt: new Date().toISOString() };
+  try {
+    await guest.context.route('**/api/**', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      if (body.db && body.user?.id === guestIdentity.id) {
+        body.globalProgram = program;
+        body.globalWallet = { unit: 'leaf', balance: 34, pendingReview: false, transactions: [entry] };
+        body.guestGlobalBalances = [];
+      }
+      await route.fulfill({ response, json: body });
+    });
+    await employee.context.route('**/api/**', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      if (body.db && body.user?.id === managerIdentity.id) {
+        body.globalProgram = program;
+        body.globalWallet = { unit: 'leaf', balance: 7, pendingReview: false, transactions: [] };
+        body.guestGlobalBalances = [first.result.venueId, second.result.venueId].map(venueId => ({ venueId, guestId: guestAccount.guestId, balance: 34 }));
+      }
+      await route.fulfill({ response, json: body });
+    });
+    await guest.page.reload(); await employee.page.reload();
+    const globalCard = guest.page.getByTestId('global-wallet-card');
+    await expect(globalCard.getByLabel('34 глобальных бонусов', { exact: true })).toBeVisible();
+    expect(await globalCard.getByTestId('global-bonus-symbol').textContent()).toBe(await guest.page.locator('[data-fx="brand"]').first().textContent());
+    await guest.page.screenshot({ path: resolve('../svoi-global-catalog-320.png') });
+    await guest.page.getByRole('button', { name: 'Открыть глобальные бонусы', exact: true }).click();
+    await expect(guest.page.getByText(entry.reason, { exact: true })).toBeVisible();
+    await expect(guest.page.getByText('Локальная благодарность', { exact: true })).toHaveCount(0);
+    await expect(guest.page.getByText('Пока только копим. Списание глобальных бонусов ещё не включено.', { exact: true })).toBeVisible();
+    await expect(guest.page.getByRole('button', { name: /Списать|Перевести/ })).toHaveCount(0);
+    await close(guest.page);
+    for (const [name, amount] of [['Кафе двух счетов', 100], ['Эль Пастор · два счёта', 200]] as const) {
+      await guest.page.getByRole('button', { name: `Открыть заведение ${name}`, exact: true }).click();
+      await expect(guest.page.getByRole('button', { name: 'Открыть мои бонусы', exact: true }).getByText(`${amount} Б`, { exact: true })).toBeVisible();
+      await expect(guest.page.getByTestId('global-wallet-card').getByLabel('34 глобальных бонусов', { exact: true })).toBeVisible();
+      await guest.page.getByRole('button', { name: 'Открыть глобальные бонусы', exact: true }).click();
+      await expect(guest.page.getByText(entry.reason, { exact: true })).toBeVisible();
+      expect(await guest.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (name.startsWith('Эль')) {
+        expect(await guest.page.getByLabel('34 глобальных бонусов', { exact: true }).last().evaluate(element => getComputedStyle(element.firstElementChild!).color)).toBe('rgb(230, 187, 142)');
+        await guest.page.screenshot({ path: resolve('../svoi-global-elpastor-history-320.png') });
+      }
+      await close(guest.page);
+      await guest.page.getByRole('tab', { name: 'Бонусы', exact: true }).click();
+      await expect(guest.page.getByText('Локальная благодарность', { exact: true })).toBeVisible();
+      await expect(guest.page.getByText(entry.reason, { exact: true })).toHaveCount(0);
+      await guest.page.getByRole('button', { name: 'Все заведения', exact: true }).click();
+    }
+    await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click();
+    await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guestAccount.guestCode);
+    await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await expect(employee.page.getByTestId('staff-global-balance').getByLabel('34 глобальных бонусов', { exact: true })).toBeVisible();
+    await expect(employee.page.getByText(entry.reason, { exact: true })).toHaveCount(0);
+    await expect(employee.page.getByRole('button', { name: 'Открыть глобальные бонусы', exact: true })).toHaveCount(0);
+    expect([...guest.errors, ...employee.errors]).toEqual([]);
+  } finally { await guest.context.close(); await employee.context.close(); }
+});
+
+test('global wallet distinguishes a real zero balance from an unavailable older snapshot', async ({ browser }) => {
+  const user = identity('Новый глобальный счёт');
+  const guest = await phone(browser, user, 390);
+  try {
+    await expect(guest.page.getByTestId('global-wallet-card').getByLabel('0 глобальных бонусов', { exact: true })).toBeVisible();
+    await guest.context.route('**/api/**', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      if (body.db) { delete body.globalWallet; delete body.globalProgram; delete body.guestGlobalBalances; }
+      await route.fulfill({ response, json: body });
+    });
+    await guest.page.reload();
+    await expect(guest.page.getByTestId('global-wallet-card').getByLabel('Глобальный баланс пока недоступен', { exact: true })).toBeVisible();
+    await expect(guest.page.getByLabel('0 глобальных бонусов', { exact: true })).toHaveCount(0);
+    await guest.page.getByRole('button', { name: 'Открыть глобальные бонусы', exact: true }).click();
+    await expect(guest.page.getByText('Счёт пока недоступен', { exact: true })).toBeVisible();
+    await expect(guest.page.getByText('Операций пока нет', { exact: true })).toHaveCount(0);
+    expect(guest.errors).toEqual([]);
+  } finally { await guest.context.close(); }
 });
