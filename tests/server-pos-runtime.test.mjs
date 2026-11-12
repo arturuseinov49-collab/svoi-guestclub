@@ -24,7 +24,7 @@ function fixture(t, { durable = false, storage = true } = {}) {
   const dir = durable ? mkdtempSync(join(tmpdir(), 'svoi-pos-runtime-')) : null;
   const path = dir ? join(dir, 'test.sqlite') : ':memory:'; const masterKey = storage ? randomBytes(32).toString('base64') : undefined;
   let now = Date.parse('2026-11-10T12:00:00Z'); let store = new Store(path, { clock: () => now, developerIds: [900000001] }); let runtime; let connectionId;
-  const flags = { orderError: false, hookMismatch: false, secretMismatch: false, gate: null, reached: null, rkeeperRows: [], rkeeperDates: {} };
+  const flags = { orderError: false, hookMismatch: false, secretMismatch: false, gate: null, reached: null, rkeeperRows: [], rkeeperDates: {}, tableOrders: [], tableError: false };
   const calls = [];
   const order = { id: orderId, organizationId: org, creationStatus: 'Success', order: { terminalGroupId: terminal, status: 'Closed', sum: 1000,
     processedPaymentsSum: 1000, customer: { id: customer }, whenClosed: '2026-11-10 15:00:01' } };
@@ -50,10 +50,15 @@ function fixture(t, { durable = false, storage = true } = {}) {
       authToken: flags.secretMismatch ? 'invalid-secret-value-that-does-not-match' : runtime.setup(owner.user.id, connectionId).webhookToken,
       webHooksFilter: { tableOrderFilter: { orderStatuses: ['Closed', 'Deleted'] } } });
     if (path === '/api/1/order/by_id') {
-      assert.deepEqual(body, { organizationIds: [org], orderIds: [orderId] });
+      assert.deepEqual(body.organizationIds, [org]); assert.ok(Array.isArray(body.orderIds));
       flags.reached?.resolve(); if (flags.gate) await flags.gate.promise;
       if (flags.orderError) throw new Error('simulated provider failure containing a secret that must not escape');
-      return response({ orders: [structuredClone(order)] });
+      return response({ orders: body.orderIds.map(id => structuredClone(id === orderId ? order : flags.tableOrders.find(item => item.id === id))).filter(Boolean) });
+    }
+    if (path === '/api/1/order/by_table') {
+      assert.deepEqual(body.organizationIds, [org]); assert.equal(body.dateFrom, '2026-11-10 15:01:00.000');
+      if (flags.tableError) throw new Error('simulated table fetch failure');
+      return response({ orders: structuredClone(flags.tableOrders) });
     }
     throw new Error(`Unexpected vendor API path: ${path}`);
   };
@@ -83,6 +88,46 @@ function fixture(t, { durable = false, storage = true } = {}) {
     async restart() { await runtime.close(); store.close(); store = new Store(path, { clock: () => now, developerIds: [900000001] }); runtime = createRuntime(); },
   };
 }
+
+const serviceTable = '66666666-6666-4666-8666-666666666666';
+const serviceWaiter = '77777777-7777-4777-8777-777777777777';
+async function tableFixture(t) {
+  const f = fixture(t); f.save(); await f.activate();
+  f.command(f.owner, 'configureServiceMapping', { venueId: f.venue.venueId, connectionId: f.id,
+    tables: [{ label: '7', posTableId: serviceTable }], staff: [{ userId: f.staff.user.id, posWaiterId: serviceWaiter }] });
+  f.command(f.staff, 'startService', { venueId: f.venue.venueId, guestId: f.guest.guestId, tableLabel: '7' });
+  Object.assign(f.order.order, { status: 'New', customer: null, processedPaymentsSum: 0, whenClosed: null,
+    tableIds: [serviceTable], waiter: { id: serviceWaiter }, whenCreated: '2026-11-10 15:01:01.000',
+    items: [{ type: 'Product', product: { name: 'Тако' }, amount: 2, resultSum: 1000 }], comment: 'Staff-only kitchen note' });
+  f.flags.tableOrders = [f.order]; return f;
+}
+
+test('service polling discovers an order without a customer or webhook, follows sticky ID and imports its paid check once', async t => {
+  const f = await tableFixture(t); await f.runtime.tick();
+  let guestState = f.store.snapshot(f.guest.user.id);
+  assert.equal(guestState.serviceSessions[0].status, 'linked'); assert.equal(guestState.db.visits.length, 0);
+  assert.equal(guestState.serviceSessions[0].order.items[0].name, 'Тако');
+  assert.equal(JSON.stringify(guestState.serviceSessions).includes('Staff-only'), false);
+  Object.assign(f.order.order, { status: 'Closed', processedPaymentsSum: 1000, whenClosed: '2026-11-10 15:02:01.000', tableIds: [customer] });
+  f.advance(61000); await f.runtime.tick();
+  guestState = f.store.snapshot(f.guest.user.id);
+  assert.equal(guestState.serviceSessions[0].status, 'closed'); assert.equal(guestState.serviceSessions[0].order.status, 'paid'); assert.equal(guestState.db.visits.length, 1);
+  assert.equal(f.balance(), 50); assert.equal(guestState.globalWallet.balance, 10);
+  f.hook(); await f.runtime.tick(); assert.equal(f.store.read().visits.length, 1); assert.equal(f.balance(), 50);
+});
+
+test('service discovery sees an entire ambiguous table batch before crediting and rejects partial failed discovery', async t => {
+  const f = await tableFixture(t);
+  Object.assign(f.order.order, { status: 'Closed', processedPaymentsSum: 1000, whenClosed: '2026-11-10 15:01:02.000' });
+  f.flags.tableOrders.push({ ...structuredClone(f.order), id: serviceWaiter });
+  f.hook(); f.flags.tableError = true; await f.runtime.tick();
+  assert.equal(f.store.read().visits.length, 0); assert.equal(f.store.sql.prepare('SELECT done_at FROM pos_jobs').get().done_at, null);
+  f.flags.tableError = false; f.advance(20000); await f.runtime.tick();
+  const state = f.store.snapshot(f.guest.user.id);
+  assert.equal(state.serviceSessions[0].status, 'review'); assert.equal(state.serviceSessions[0].order, undefined);
+  assert.equal(state.db.visits.length, 0); assert.equal(state.globalWallet.balance, 0);
+  assert.equal(f.store.snapshot(f.owner.user.id).serviceSessions[0].candidates.length, 2);
+});
 
 test('POS credentials are encrypted, authenticated to venue/connection, absent from status, and owner-scoped', async t => {
   const f = fixture(t, { durable: true }); f.save();

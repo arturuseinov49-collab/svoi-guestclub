@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { ApiError } from '../database.mjs';
 import { recordVisit } from '../domain.mjs';
 import { creditGlobalPosCashback } from '../global-bonuses.mjs';
+import { normalizeServiceMetadata, ingestServiceBatch, serviceOrderBinding, updateServiceOrderOutcome, servicePollTargets } from '../service-sessions.mjs';
 
 const providers = new Set(['iiko', 'rkeeper']);
 const receiptStates = new Set(['paid', 'open', 'refund', 'review']);
@@ -10,6 +11,7 @@ const messages = {
   imported: 'Визит и бонусы учтены', open: 'Заказ ещё не закрыт и не оплачен',
   unmatched: 'Нужна привязка клиента кассы к гостю', review: 'Нужна сверка изменения или возврата',
   held: 'Начисление приостановлено до сверки гостя', ignored: 'Чек закрыт до начала подключения',
+  service_review: 'Руководитель должен выбрать заказ для обслуживания',
 };
 const fail = (status, message) => { throw new ApiError(status, message); };
 const text = (value, label, max = 200) => {
@@ -29,6 +31,7 @@ const digest = receipt => createHash('sha256').update(JSON.stringify(receipt)).d
 export class PosStore {
   constructor(store) {
     this.store = store; this.sql = store.sql; this.clock = store.clock;
+    store.servicePos = this;
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS pos_connections (
         id TEXT PRIMARY KEY, venue_id TEXT NOT NULL, provider TEXT NOT NULL CHECK(provider IN ('iiko','rkeeper')),
@@ -116,12 +119,43 @@ export class PosStore {
     if (closedAt && Date.parse(closedAt) > this.clock() + 300000) fail(400, 'Время закрытия чека находится в будущем');
     return { provider: connection.provider, scope: connection.scope, externalId, status: input.status, billMinor, customerId, closedAt };
   }
-  importReceipt(connectionId, input) {
+  importReceipt(connectionId, input) { return this.importBatch(connectionId, [input])[0]; }
+  servicePollTargets(connectionId) {
+    return this.store.transaction(() => {
+      const connection = this.getConnection(connectionId);
+      if (!connection.enabled) return { tableIds: [], orderIds: [], since: null };
+      const db = this.store.read(); const targets = servicePollTargets(this.store, db, connectionId); this.store.write(db); return targets;
+    });
+  }
+  importBatch(connectionId, inputs) {
     return this.store.transaction(() => {
       const connection = this.getConnection(connectionId);
       if (!connection.enabled) fail(409, 'Подключение кассы выключено');
-      return this.apply(connection, this.normalize(connection, input));
+      if (!Array.isArray(inputs) || inputs.length > 500) fail(400, 'Не более 500 чеков за обмен');
+      const records = inputs.map(input => ({ receipt: this.normalize(connection, input), service: normalizeServiceMetadata(input.service, this.clock()) }));
+      if (new Set(records.map(item => item.receipt.externalId)).size !== records.length) fail(409, 'Один заказ встречается в пакете несколько раз');
+      const serviceState = ingestServiceBatch(this.store, this.store.read(), connection, records); this.store.write(serviceState);
+      // Refunds, corrections and identity conflicts anywhere in this verified
+      // batch must hold known guests before an earlier row can earn bonuses.
+      for (const { receipt } of records) {
+        const old = this.sql.prepare('SELECT guest_id,credited_fingerprint,outcome FROM pos_orders WHERE connection_id=? AND external_id=?').get(connection.id, receipt.externalId);
+        const customerGuestId = this.linked(connection.id, receipt.customerId);
+        const serviceGuestId = serviceOrderBinding(serviceState, connection.id, receipt.externalId).session?.guestId;
+        const conflict = serviceGuestId && customerGuestId && serviceGuestId !== customerGuestId;
+        const changed = old?.credited_fingerprint && (old.outcome === 'review' || digest(receipt) !== old.credited_fingerprint);
+        const currentReturn = !(receipt.closedAt && receipt.closedAt < connection.startedAt) && ['refund', 'review'].includes(receipt.status);
+        if (conflict || changed || old?.outcome === 'review' || currentReturn) for (const guestId of new Set([old?.guest_id, customerGuestId, serviceGuestId].filter(Boolean))) this.hold(connection, guestId, receipt.externalId);
+      }
+      return records.map(({ receipt }) => this.apply(connection, receipt));
     });
+  }
+  /** Existing verified POS row only; caller already owns the enclosing transaction. */
+  reapplyServiceOrder(connectionId, externalId) {
+    const connection = this.getConnection(connectionId);
+    if (!connection.enabled) fail(409, 'Подключение кассы выключено');
+    const row = this.sql.prepare('SELECT receipt FROM pos_orders WHERE connection_id=? AND external_id=?').get(connectionId, externalId);
+    if (!row) fail(404, 'Заказ кассы не найден');
+    return this.apply(connection, JSON.parse(row.receipt));
   }
   linked(connectionId, customerId) {
     return customerId === null ? null : this.sql.prepare('SELECT guest_id FROM pos_customer_links WHERE connection_id=? AND customer_id=?').get(connectionId, customerId)?.guest_id ?? null;
@@ -133,14 +167,23 @@ export class PosStore {
   apply(connection, receipt) {
     const old = this.sql.prepare('SELECT * FROM pos_orders WHERE connection_id=? AND external_id=?').get(connection.id, receipt.externalId);
     const fingerprint = digest(receipt); const now = this.now();
-    let guestId = this.linked(connection.id, receipt.customerId); let outcome; let earned = old?.earned ?? 0; let visitId = old?.visit_id ?? null;
+    const customerGuestId = this.linked(connection.id, receipt.customerId);
+    const binding = serviceOrderBinding(this.store.read(), connection.id, receipt.externalId);
+    const serviceGuestId = binding.session?.guestId;
+    let guestId = serviceGuestId ?? customerGuestId; let outcome; let earned = old?.earned ?? 0; let visitId = old?.visit_id ?? null;
     let creditedFingerprint = old?.credited_fingerprint ?? null; let creditedReceipt = old?.credited_receipt ?? null;
-    if (old?.credited_fingerprint) {
+    if (serviceGuestId && customerGuestId && serviceGuestId !== customerGuestId) {
+      outcome = 'review'; this.hold(connection, serviceGuestId, receipt.externalId); this.hold(connection, customerGuestId, receipt.externalId);
+      if (old?.guest_id) this.hold(connection, old.guest_id, receipt.externalId);
+      guestId = old?.credited_fingerprint ? old.guest_id : serviceGuestId;
+    } else if (old?.credited_fingerprint) {
       guestId = old.guest_id;
       outcome = old.outcome === 'review' || fingerprint !== old.credited_fingerprint ? 'review' : 'imported';
       if (outcome === 'review') { this.hold(connection, guestId, receipt.externalId); this.hold(connection, this.linked(connection.id, receipt.customerId), receipt.externalId); }
     } else if (old?.outcome === 'review') {
       outcome = 'review'; this.hold(connection, guestId, receipt.externalId);
+    } else if (binding.blocked) {
+      outcome = 'service_review'; guestId = null;
     } else if (receipt.closedAt && receipt.closedAt < connection.startedAt) outcome = 'ignored';
     else if (receipt.status === 'refund' || receipt.status === 'review') {
       outcome = 'review'; this.hold(connection, guestId, receipt.externalId);
@@ -163,6 +206,14 @@ export class PosStore {
       guest_id=excluded.guest_id,visit_id=excluded.visit_id,earned=excluded.earned,credited_fingerprint=excluded.credited_fingerprint,credited_receipt=excluded.credited_receipt,updated_at=excluded.updated_at`)
       .run(connection.id, receipt.externalId, JSON.stringify(receipt), fingerprint, outcome, guestId, visitId, earned, creditedFingerprint, creditedReceipt, old?.created_at ?? now, now);
     if (!old || old.outcome !== outcome || old.fingerprint !== fingerprint) this.audit(connection.id, outcome, { externalId: receipt.externalId, guestId });
+    if (binding.session || creditedFingerprint) {
+      const state = this.store.read();
+      const detail = (state.orderDetails ?? []).find(item => item.connectionId === connection.id && item.externalId === receipt.externalId);
+      const markCredited = !!creditedFingerprint && detail && !detail.previouslyCredited;
+      if (markCredited) detail.previouslyCredited = true;
+      if (binding.session) updateServiceOrderOutcome(state, connection.id, receipt.externalId, outcome, now);
+      if (binding.session || markCredited) this.store.write(state);
+    }
     return { connectionId: connection.id, externalId: receipt.externalId, status: outcome, earned, guestId, visitId,
       duplicate: !!old && old.fingerprint === fingerprint && old.outcome === outcome, message: messages[outcome] };
   }
@@ -182,6 +233,12 @@ export class PosStore {
       if (!existing) {
         this.sql.prepare('INSERT INTO pos_customer_links(connection_id,customer_id,guest_id,actor_id,created_at) VALUES (?,?,?,?,?)').run(connectionId, receipt.customerId, user.guest_id, userId, this.now());
         this.audit(connectionId, 'customer_linked', { externalId: receipt.externalId, guestId: user.guest_id, actorId: userId });
+      }
+      // A later explicit POS-customer link must not silently contradict an already
+      // attached table session, including an open order or an already paid order.
+      for (const row of this.sql.prepare("SELECT receipt FROM pos_orders WHERE connection_id=? AND json_extract(receipt,'$.customerId')=?").all(connectionId, receipt.customerId)) {
+        const known = JSON.parse(row.receipt); const binding = serviceOrderBinding(this.store.read(), connectionId, known.externalId);
+        if (binding.session && binding.session.guestId !== user.guest_id) this.apply(connection, known);
       }
       // A refund seen before mapping must block this guest before any pending paid receipt is processed.
       for (const row of this.sql.prepare("SELECT external_id FROM pos_orders WHERE connection_id=? AND outcome='review' AND json_extract(receipt,'$.customerId')=?").all(connectionId, receipt.customerId)) {

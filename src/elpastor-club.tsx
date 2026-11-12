@@ -5,6 +5,7 @@ import { effectiveGuestProfile } from './venue-profile';
 import { ElpastorArt } from './elpastor-art';
 import { Icon, IconName, Txt, fx } from './ui';
 import { GlobalWalletCard } from './bonus-ui';
+import { GuestServiceHistory } from './service-ui';
 
 export const EP = { bg: '#210911', surface: '#350F1C', cream: '#FFF1DA', gold: '#E6BB8E', muted: '#C5A995', border: '#75404A' };
 
@@ -41,6 +42,7 @@ export function ElpastorClubPage({ venue, guestName, balance, globalBalance, glo
       <View style={{ padding: 16, paddingTop: 0 }}><ClubButton label="Показать мой QR" subtitle="Личный код для визита" icon="qr-code-outline" tone="gold" onPress={onQr} /></View>
     </View>
     <View style={c.location}><Icon name="location-outline" size={15} color={EP.gold} /><Txt style={{ flex: 1, color: EP.muted, fontSize: 11, lineHeight: 18 }}>{venue.address}</Txt></View>
+    <GuestServiceHistory venueId={venue.id} theme="elpastor" activeOnly />
     <View style={{ gap: 12 }}><View style={c.sectionTitle}><Txt style={c.heading}>Планы на ваш вечер</Txt><Txt style={{ color: EP.gold, fontSize: 17 }}>✦</Txt></View>
       {([
         ['booking', 'Забронировать стол', 'Выбрать дату и время', 'calendar-outline'],

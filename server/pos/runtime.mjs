@@ -55,8 +55,9 @@ export class PosRuntime {
       if (raw.currency !== 'RUB') throw new ApiError(400, 'Подтвердите, что основная валюта ресторана — российский рубль');
       scope = String(Number(raw.objectId));
       config = { objectId: raw.objectId, token: required(raw.token, 'Токен White Server'),
-        customerIdProperty: required(raw.customerIdProperty, 'Поле клиента кассы', 100),
-        closedAtProperty: required(raw.closedAtProperty, 'Поле времени закрытия', 100), currency: 'RUB' };
+        customerIdProperty: raw.customerIdProperty ? required(raw.customerIdProperty, 'Поле клиента кассы', 100) : null,
+        closedAtProperty: required(raw.closedAtProperty, 'Поле времени закрытия', 100),
+        openedAtProperty: raw.openedAtProperty ? required(raw.openedAtProperty, 'Поле времени открытия', 100) : null, currency: 'RUB' };
     }
     const old = this.pos.listConnections().find(row => row.provider === provider && row.scope === scope);
     if (old && old.venueId !== input.venueId) throw new ApiError(409, 'Эта касса уже привязана к другому заведению');
@@ -79,7 +80,7 @@ export class PosRuntime {
     catch (error) {
       this.owner(userId, id);
       if (this.secrets.revision(id) === credentials.revision) this.pos.updateSync(id, { lastError: 'configuration' });
-      throw new ApiError(502, error?.code === 'SETUP' ? 'Для проверки нужен закрытый оплаченный тестовый чек с идентификатором клиента и временем закрытия в настроенных полях r_keeper.' : genericFailure);
+      throw new ApiError(502, error?.code === 'SETUP' ? 'Для проверки нужен оплаченный тестовый чек с временем закрытия и либо клиентом, либо столом, официантом и временем открытия в настроенных полях r_keeper.' : genericFailure);
     }
     this.owner(userId, id);
     if (this.secrets.revision(id) !== credentials.revision) throw new ApiError(409, 'Настройки изменились. Повторите проверку');
@@ -152,31 +153,43 @@ export class PosRuntime {
           // A return without a documented original-order reference cannot be safely reversed automatically.
           const returns = receipts.filter(receipt => receipt.status === 'refund' && (!receipt.closedAt || receipt.closedAt >= connection.startedAt));
           if (returns.length) {
-            for (const receipt of returns) this.pos.importReceipt(id, receipt);
+            this.pos.importBatch(id, returns);
             this.store.sql.prepare('INSERT OR IGNORE INTO pos_connection_holds(connection_id,created_at) VALUES(?,?)').run(id, this.clock());
             this.pos.configure({ ...this.pos.getConnection(id), enabled: false });
             this.pos.updateSync(id, { lastError: 'review_required' }); return;
           }
           const existing = new Set(this.store.sql.prepare('SELECT external_id FROM pos_orders WHERE connection_id=? AND credited_fingerprint IS NOT NULL').all(id).map(row => row.external_id));
           receipts.sort((a, b) => Number(existing.has(b.externalId)) - Number(existing.has(a.externalId)) || (a.closedAt ?? '').localeCompare(b.closedAt ?? ''));
-          for (const receipt of receipts) this.pos.importReceipt(id, receipt);
+          this.pos.importBatch(id, receipts);
           this.pos.updateSync(id, { lastSuccessAt: new Date(this.clock()).toISOString(), lastError: null });
           this.pos.retryPending(id);
         } else {
           const jobs = this.store.sql.prepare('SELECT * FROM pos_jobs WHERE connection_id=? AND done_at IS NULL AND due_at<=? ORDER BY due_at LIMIT 25').all(id, this.clock());
-          for (const job of jobs) {
-            if (!this.current(id, credentials.revision)) break;
-            try {
-              const receipt = await client.fetchReceipt(job.order_id);
-              if (!this.current(id, credentials.revision)) break;
-              // The HTTP response may race a newer webhook; the generation guard keeps that event queued.
-              this.pos.importReceipt(id, receipt);
-              this.store.sql.prepare('UPDATE pos_jobs SET done_at=?,attempts=0 WHERE connection_id=? AND order_id=? AND generation=?').run(this.clock(), id, job.order_id, job.generation);
-              this.pos.updateSync(id, { lastSuccessAt: new Date(this.clock()).toISOString(), lastError: null });
-            } catch {
-              this.store.sql.prepare('UPDATE pos_jobs SET attempts=attempts+1,due_at=? WHERE connection_id=? AND order_id=? AND generation=?').run(this.clock() + Math.min(3600000, 10000 * 2 ** Math.min(job.attempts, 9)), id, job.order_id, job.generation);
-              this.pos.updateSync(id, { lastError: 'sync_failed' });
+          const targets = this.pos.servicePollTargets(id);
+          const pollServices = (targets.tableIds.length || targets.orderIds.length) && (jobs.length || (this.nextPoll.get(id) ?? 0) <= this.clock());
+          try {
+            const receipts = new Map();
+            if (pollServices) {
+              // Discover all candidates before matching; a single webhook must
+              // not win merely because another order at the table arrived later.
+              if (targets.tableIds.length) for (const receipt of await client.fetchTableReceipts(targets.tableIds, targets.since)) receipts.set(receipt.externalId, receipt);
             }
+            const ids = [...new Set([...jobs.map(job => job.order_id), ...(pollServices ? targets.orderIds : [])])];
+            for (let offset = 0; offset < ids.length; offset += 100) {
+              for (const receipt of await client.fetchReceipts(ids.slice(offset, offset + 100))) receipts.set(receipt.externalId, receipt);
+            }
+            if (!this.current(id, credentials.revision)) return;
+            if (receipts.size) this.pos.importBatch(id, [...receipts.values()]);
+            // The HTTP response may race a newer webhook; keep that generation queued.
+            for (const job of jobs) this.store.sql.prepare('UPDATE pos_jobs SET done_at=?,attempts=0 WHERE connection_id=? AND order_id=? AND generation=?').run(this.clock(), id, job.order_id, job.generation);
+            if (pollServices) this.nextPoll.set(id, this.clock() + 60000);
+            if (receipts.size || pollServices) this.pos.updateSync(id, { lastSuccessAt: new Date(this.clock()).toISOString(), lastError: null });
+          } catch {
+            for (const job of jobs) {
+              this.store.sql.prepare('UPDATE pos_jobs SET attempts=attempts+1,due_at=? WHERE connection_id=? AND order_id=? AND generation=?').run(this.clock() + Math.min(3600000, 10000 * 2 ** Math.min(job.attempts, 9)), id, job.order_id, job.generation);
+            }
+            if (pollServices) this.nextPoll.set(id, this.clock() + 60000);
+            this.pos.updateSync(id, { lastError: 'sync_failed' });
           }
           this.pos.retryPending(id);
         }

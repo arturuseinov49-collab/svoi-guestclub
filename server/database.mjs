@@ -6,6 +6,7 @@ import { recordVisit, awardBonus, addNote, addReview, replyReview, redeemReward,
 import { effectiveGuestProfile, validateGuestProfile } from './venue-profile.mjs';
 import { validateServiceFlow } from './service-flow.mjs';
 import { GLOBAL_PROGRAM, globalBalances, guestGlobalWallet } from './global-bonuses.mjs';
+import { startService, cancelService, configureServiceMapping, resolveServiceOrder, requireServiceAccess, serviceSnapshot } from './service-sessions.mjs';
 
 const empty = () => ({ version: 1, venues: [], guests: [], memberships: [], visits: [], notes: [], reviews: [], transactions: [], posEvents: [] });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -133,13 +134,14 @@ export class Store {
     const hasPosHolds = this.sql.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pos_guest_holds'").get();
     const pendingReview = !!(hasPosHolds && this.sql.prepare('SELECT 1 FROM pos_guest_holds WHERE guest_id=? LIMIT 1').get(row.guest_id));
     return { user: { id: row.id, firstName: row.first_name, lastName: row.last_name, username: row.username }, guestId: row.guest_id, guestCode: row.guest_code, guestQr: qrPrefix + row.guest_qr, isDeveloper: this.isDeveloper(userId), staffVenues,
+      ...serviceSnapshot(this, db, userId, row.guest_id, staffVenues),
       globalProgram: { ...GLOBAL_PROGRAM }, globalWallet: guestGlobalWallet(db, row.guest_id, pendingReview, balances),
       guestGlobalBalances: db.memberships.filter(item => permitted.has(item.venueId)).map(({ venueId, guestId }) => ({ venueId, guestId, balance: balances.get(guestId) ?? 0 })),
       catalog: db.venues.filter(venue => effectiveGuestProfile(venue).published).map(catalogVenue),
       db: { version: 1,
         venues: db.venues.filter(venue => permitted.has(venue.id) || member.has(venue.id)).map(venue => { const { joinCode, serviceFlow, ...publicVenue } = venue; return permitted.has(venue.id) ? venue : publicVenue; }),
         guests: db.guests.filter(guest => guestIds.has(guest.id)), memberships,
-        visits: db.visits.filter(visible).map(visit => permitted.has(visit.venueId) ? visit : { ...visit, rating: null }),
+        visits: db.visits.filter(visible).map(visit => { if (permitted.has(visit.venueId)) return visit; const { externalId, ...publicVisit } = visit; return { ...publicVisit, rating: null }; }),
         notes: db.notes.filter(note => permitted.has(note.venueId)), reviews: db.reviews.filter(visible), transactions: db.transactions.filter(visible), posEvents: [],
       },
     };
@@ -161,6 +163,16 @@ export class Store {
       const staff = owner => this.requireStaff(userId, venueId, owner);
       const member = guestId => { if (!db.memberships.some(item => item.venueId === venueId && item.guestId === guestId)) fail(404, 'Гость не найден в этом заведении'); };
       switch (type) {
+        case 'startService': case 'cancelService': case 'configureServiceMapping': case 'resolveServiceOrder': {
+          const handlers = { startService, cancelService, configureServiceMapping, resolveServiceOrder };
+          const change = handlers[type](this, db, userId, { ...input, venueId });
+          db = change.db; result = change.result;
+          if (change.reapply) {
+            if (!this.servicePos) fail(409, 'Обмен с кассой пока не настроен');
+            this.write(db); this.servicePos.reapplyServiceOrder(change.reapply.connectionId, change.reapply.externalId); db = this.read();
+          }
+          break;
+        }
         case 'createVenue': {
           this.requireDeveloper(userId);
           const name = string(input.name, 2, 70, 'Название'); const kind = string(input.kind, 2, 50, 'Тип заведения'); const address = string(input.address, 2, 150, 'Адрес');
@@ -270,6 +282,7 @@ export class Store {
       if (type === 'joinVenue') auditGuestId = ownGuestId;
       if (['addGuest', 'scanGuest', 'recordVisit', 'awardBonus', 'addNote', 'updateProgram', 'updateServiceFlow', 'updateVenueProfile', 'redeemReward', 'createStaffInvite', 'createManagerInvite', 'revokeManager', 'listStaff', 'revokeStaff', 'addReview'].includes(type)) auditVenueId = venueId;
       if (['recordVisit', 'awardBonus', 'addNote', 'redeemReward'].includes(type)) auditGuestId = input.guestId;
+      if (['startService', 'cancelService', 'configureServiceMapping', 'resolveServiceOrder'].includes(type)) { auditVenueId = venueId; auditGuestId = result.guestId ?? null; }
       if (['addGuest', 'scanGuest'].includes(type)) auditGuestId = result.guestId;
       if (type === 'addReview') auditGuestId = ownGuestId;
       if (type === 'replyReview') { const review = db.reviews.find(item => item.id === input.reviewId); auditVenueId = review.venueId; auditGuestId = review.guestId; }
@@ -278,6 +291,9 @@ export class Store {
     });
   }
   authorizeReplay(userId, input) {
+    if (input.type === 'startService') this.requireStaff(userId, input.venueId);
+    if (input.type === 'cancelService') requireServiceAccess(this, this.read(), userId, input.venueId, input.sessionId);
+    if (['configureServiceMapping', 'resolveServiceOrder'].includes(input.type)) this.requireStaff(userId, input.venueId, true);
     if (['createVenue', 'listManagedVenues', 'createManagerInvite', 'revokeManager', 'updateVenueProfile'].includes(input.type)) this.requireDeveloper(userId);
     if (['recordVisit', 'awardBonus', 'addNote', 'redeemReward', 'addGuest', 'scanGuest'].includes(input.type)) this.requireStaff(userId, input.venueId);
     if (['updateProgram', 'updateServiceFlow', 'createStaffInvite', 'listStaff', 'revokeStaff'].includes(input.type)) this.requireStaff(userId, input.venueId, true);

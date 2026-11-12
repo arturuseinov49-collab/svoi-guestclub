@@ -41,10 +41,29 @@ test('unknown customer, absent close timestamp and non-final orders never invent
   const noCustom = fixture({ order: detail({ extProperties: { GuestPhone: '+79999999999', GuestName: 'Not an identity' }, createdAt: '2026-11-10T10:00:00', rkFriendsAnchor: orderGuid }) });
   assert.deepEqual((await noCustom.client.poll()).receipts[0], { provider: 'rkeeper', scope: String(objectId), externalId: orderGuid, status: 'review', billMinor: 40850, customerId: null, closedAt: null });
   const open = fixture({ rows: [row({ isFinished: false, unpaid: 408.5 })] });
-  assert.equal((await open.client.poll()).receipts[0].status, 'open'); assert.equal(open.calls.length, 1);
+  assert.equal((await open.client.poll()).receipts[0].status, 'open'); assert.equal(open.calls.length, 2);
   for (const change of [{ unpaid: 0.01 }, { isReturn: undefined }, { isReserve: true }, { unpaid: null }, { sum: '408.5001' }, { sum: -10 }, { sum: 0 }]) {
     assert.notEqual((await fixture({ rows: [row(change)] }).client.poll()).receipts[0].status, 'paid');
   }
+});
+
+test('r_keeper reads open order dishes, excludes voids and never guesses local opening time or discounted line totals', async () => {
+  const order = detail({ tableCode: 7, waiterId: 15, comment: 'Kitchen only', products: [
+    { name: 'Тако', quantity: 2, price: 100 }, { name: 'Отмена', quantity: 1, price: 50, voidReason: 'void' },
+    { name: 'Отмена 2', quantity: 1, price: 50, voidingReason: 'void' },
+  ], extProperties: { SvoiOpenedAt: '2026-11-10T14:00:00+03:00' } });
+  const f = fixture({ rows: [row({ isFinished: false, unpaid: 408.5, openTime: '2026-11-10T14:00:00' })], order, options: { openedAtProperty: 'SvoiOpenedAt' } });
+  const receipt = (await f.client.poll()).receipts[0];
+  assert.equal(receipt.status, 'open'); assert.equal(receipt.closedAt, null);
+  assert.deepEqual(receipt.service, { tableIds: ['7'], waiterId: '15', openedAt: '2026-11-10T11:00:00.000Z', comment: 'Kitchen only', items: [{ name: 'Тако', quantity: 2, sumMinor: null }] });
+  const noOffset = fixture({ rows: [row({ openTime: '2026-11-10T14:00:00' })], order });
+  assert.equal((await noOffset.client.poll()).receipts[0].service.openedAt, null);
+});
+
+test('r_keeper probe accepts a real pilot receipt identified by table/waiter/opening time without a customer field', async () => {
+  const f = fixture({ options: { customerIdProperty: null, openedAtProperty: 'SvoiOpenedAt' }, order: detail({ tableCode: 7, waiterId: 15,
+    extProperties: { SvoiClosedAt: '2026-11-10T14:30:00+03:00', SvoiOpenedAt: '2026-11-10T14:00:00+03:00' } }) });
+  assert.equal((await f.client.probe()).ok, true);
 });
 
 test('return orders are flagged separately and list/detail discrepancies require review', async () => {

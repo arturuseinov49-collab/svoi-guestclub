@@ -4,7 +4,8 @@ import { Guest, Role, Venue, money, rewards, sameDay, shortDate, stats } from '.
 import { useStore } from './store';
 import { Avatar, Button, C, Callout, Empty, Icon, Pill, Section, Stars, Txt, fx, s } from './ui';
 import { effectiveGuestProfile } from './venue-profile';
-import { GlobalWalletCard, globalEarningDescription } from './bonus-ui';
+import { GlobalWalletCard, globalEarningDescription, bonusColors } from './bonus-ui';
+import { GuestServiceHistory } from './service-ui';
 export type ScreenActions = {
   venue: Venue; role: Role; go: (tab: number) => void; guest: (id: string) => void;
   visit: (id?: string) => void; scan: () => void; award: (id?: string) => void; review: () => void;
@@ -91,8 +92,18 @@ export function Reviews(p: ScreenActions) {
 export function MyVisits(p: ScreenActions) {
   const { db, guestId } = useStore();
   const st = stats(db, p.venue.id, guestId);
-  const reviewsEnabled = effectiveGuestProfile(p.venue).features.reviews;
-  return <View style={s.page}><View style={{ gap: 7 }}><Txt weight="bold" style={s.eyebrow}>НАША ОБЩАЯ ИСТОРИЯ</Txt><Txt weight="extra" style={s.title}>Ваши визиты</Txt><Txt style={s.caption}>Хорошие привычки складываются в историю.</Txt></View><View style={[s.card, s.row, { justifyContent: 'space-around' }]}><View style={{ gap: 6, alignItems: 'center' }}><Txt weight="extra" style={{ fontSize: 28 }}>{st.count}</Txt><Txt style={s.caption}>визитов</Txt></View><View style={{ height: 40, width: 1, backgroundColor: C.line }} /><View style={{ gap: 6, alignItems: 'center' }}><Txt weight="extra" style={{ fontSize: 28 }}>{money(st.spent)} ₽</Txt><Txt style={s.caption}>сумма заказов</Txt></View></View><View style={{ gap: 12 }}>{st.visits.map(v => <View key={v.id} style={[s.card, { gap: 13 }]}><View style={[s.row, { gap: 12 }]}><View style={xs.ruleIcon}><Icon name="cafe-outline" size={21} /></View><View style={{ flex: 1, gap: 3 }}><Txt weight="bold" style={{ fontSize: 14 }}>{p.venue.name}</Txt><Txt style={s.caption}>{shortDate(v.createdAt)}</Txt></View><Txt weight="bold">{money(v.bill)} ₽</Txt></View><View style={[s.row, { justifyContent: 'space-between' }]}><Txt style={{ color: C.muted, fontSize: 11 }}>Спасибо за чаевые: {money(v.tips)} ₽</Txt><Pill label="Визит отмечен" icon="checkmark" /></View></View>)}</View>{reviewsEnabled && st.count > 0 && <Button label="Оставить отзыв" icon="create-outline" variant="secondary" onPress={p.review} />}{!st.count && <Empty title="До первой встречи" text="После посещения сотрудник отметит ваш визит." />}</View>;
+  const profile = effectiveGuestProfile(p.venue);
+  const theme = profile.theme === 'elpastor' ? 'elpastor' : 'default';
+  const colors = bonusColors(theme);
+  return <View style={s.page}>
+    <View style={{ gap: 7 }}><Txt weight="bold" style={[s.eyebrow, { color: colors.accent }]}>НАША ОБЩАЯ ИСТОРИЯ</Txt><Txt weight="extra" style={[s.title, { color: colors.ink }]}>Ваши визиты</Txt><Txt style={[s.caption, { color: colors.muted }]}>Заказы столов и подтверждённые посещения.</Txt></View>
+    <GuestServiceHistory venueId={p.venue.id} theme={theme} />
+    <Txt weight="extra" style={{ fontSize: 20, color: colors.ink }}>Подтверждённые визиты</Txt>
+    <View style={[s.card, s.row, { justifyContent: 'space-around', gap: 14, flexWrap: 'wrap', backgroundColor: colors.surface, borderColor: colors.border }]}><View style={{ gap: 6, alignItems: 'center' }}><Txt weight="extra" style={{ fontSize: 28, color: colors.ink }}>{st.count}</Txt><Txt style={[s.caption, { color: colors.muted }]}>визитов</Txt></View><View style={{ gap: 6, alignItems: 'center' }}><Txt weight="extra" style={{ fontSize: 28, color: colors.ink }}>{money(st.spent)} ₽</Txt><Txt style={[s.caption, { color: colors.muted }]}>сумма визитов</Txt></View></View>
+    <View style={{ gap: 12 }}>{st.visits.map(v => <View key={v.id} style={[s.card, { gap: 13, backgroundColor: colors.surface, borderColor: colors.border }]}><View style={[s.row, { gap: 12, flexWrap: 'wrap' }]}><View style={{ flex: 1, minWidth: 100, gap: 4 }}><Txt weight="bold" style={{ fontSize: 14, color: colors.ink }}>{p.venue.name}</Txt><Txt style={[s.caption, { color: colors.muted }]}>{shortDate(v.createdAt)}</Txt></View><Txt weight="bold" style={{ color: colors.ink }}>{money(v.bill)} ₽</Txt></View><Txt style={{ color: colors.muted, fontSize: 11 }}>{v.tipsKnown === false ? 'Чаевые кассой не переданы' : `Спасибо за чаевые: ${money(v.tips)} ₽`}</Txt><Pill label="Визит отмечен" icon="checkmark" color={colors.accent} background={colors.surface} /></View>)}</View>
+    {profile.features.reviews && st.count > 0 && <Button label="Оставить отзыв" icon="create-outline" variant="secondary" onPress={p.review} />}
+    {!st.count && <Txt style={[s.caption, { color: colors.muted }]}>Подтверждённых визитов пока нет. Сохранение стола отдельно не меняет эту историю.</Txt>}
+  </View>;
 }
 const xs = StyleSheet.create({
   hero: { backgroundColor: C.lime, borderRadius: 30, borderWidth: 1, borderColor: '#FFFFFFAD', padding: 23, overflow: 'hidden', minHeight: 290 },

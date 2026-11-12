@@ -649,6 +649,13 @@ for (const platform of ['android', 'ios']) test(`${platform}: iikoWaiter offers 
     await openCard();
     await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0);
     await expect(employee.page.getByRole('button', { name: 'Отметить визит', exact: true })).toHaveCount(0);
+    await expect(employee.page.getByRole('button', { name: 'Как перейти в iikoWaiter', exact: true })).toHaveCount(0);
+    await employee.page.getByLabel('Номер стола', { exact: true }).fill('01');
+    await expect(employee.page.getByLabel('Номер стола', { exact: true })).toHaveValue('01');
+    await expect(employee.page.getByText(`Заказ и чек этого стола будут привязаны к Гость iiko ${platform} Проверка.`, { exact: true })).toBeVisible();
+    const saved = await resultOf(employee.page, 'startService', () => employee.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click());
+    expect(saved.serviceSessions.find((item: any) => item.id === saved.result.sessionId)).toMatchObject({ tableLabel: '01', status: 'awaiting_setup' });
+    expect(await employee.page.evaluate(() => (window as any).__openedWaiterLinks)).toEqual([]);
     await employee.page.getByRole('button', { name: 'Как перейти в iikoWaiter', exact: true }).click();
     await expect(employee.page.getByText(/Сверните Telegram и откройте установленный iikoWaiter/)).toBeVisible();
     await employee.page.getByRole('button', { name: `Установить iikoWaiter · ${platform === 'ios' ? 'App Store' : 'Google Play'}`, exact: true }).click();
@@ -764,4 +771,203 @@ test('global wallet distinguishes a real zero balance from an unavailable older 
     await expect(guest.page.getByText('Операций пока нет', { exact: true })).toHaveCount(0);
     expect(guest.errors).toEqual([]);
   } finally { await guest.context.close(); }
+});
+
+test('service table: a lost save response keeps Waiter locked; retry and guest polling show one pending table without rewards', async ({ browser, request }) => {
+  const managerIdentity = identity('Команда стола'); const guestIdentity = identity('Гость стола');
+  const manager = await session(request, managerIdentity); const guestAccount = await session(request, guestIdentity);
+  const created = await createForManager(request, manager.token, 'Сохранение стола'); const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'updateServiceFlow', { venueId, serviceFlow: { cashSystem: 'iiko', waiterAndroidUrl: 'https://example.com/waiter/android', waiterIosUrl: '' } });
+  const employee = await phone(browser, managerIdentity, 320); const guest = await phone(browser, guestIdentity, 320);
+  const keys: string[] = []; let dropped = false;
+  try {
+    await employee.page.evaluate(() => { (window as any).__openedWaiterLinks = []; (window as any).Telegram.WebApp.openLink = (url: string) => (window as any).__openedWaiterLinks.push(url); });
+    await employee.context.route('**/api/commands', async route => {
+      const input = route.request().postDataJSON();
+      if (input.type === 'startService') {
+        keys.push(input.idempotencyKey);
+        const response = await route.fetch();
+        if (!dropped) { dropped = true; await route.abort('failed'); } else await route.fulfill({ response });
+      } else await route.continue();
+    });
+    await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click();
+    await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guestAccount.guestCode);
+    await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await employee.page.getByLabel('Номер стола', { exact: true }).fill('07');
+    await employee.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click();
+    await expect(employee.page.getByText('Нет связи с сервером. Проверьте интернет и повторите попытку.', { exact: true })).toBeVisible();
+    // A later poll knows that the commit succeeded, but this attempt still needs
+    // its successful idempotent acknowledgement before offering the handoff.
+    await expect(employee.page.getByText('Стол 07', { exact: true })).toBeVisible({ timeout: 20000 });
+    await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0);
+    await expect(employee.page.getByLabel('Номер стола', { exact: true })).not.toBeEditable();
+    const retried = await resultOf(employee.page, 'startService', () => employee.page.getByRole('button', { name: 'Проверить сохранение стола', exact: true }).click());
+    expect(keys).toHaveLength(2); expect(keys[0]).toBe(keys[1]); expect(retried.serviceSessions).toHaveLength(1);
+    expect(await employee.page.evaluate(() => (window as any).__openedWaiterLinks)).toEqual([]);
+    await employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true }).click();
+    expect(await employee.page.evaluate(() => (window as any).__openedWaiterLinks)).toEqual(['https://example.com/waiter/android']);
+    const snapshot = await state(request, guestAccount.token);
+    expect(snapshot.serviceSessions).toHaveLength(1); expect(snapshot.serviceSessions[0]).toMatchObject({ tableLabel: '07', status: 'awaiting_setup' });
+    expect(snapshot.serviceSessions[0].order).toBeUndefined(); expect(snapshot.db.visits).toHaveLength(0); expect(snapshot.db.transactions).toHaveLength(0); expect(snapshot.globalWallet.balance).toBe(0);
+    await guest.page.reload(); await guest.page.getByRole('button', { name: 'Открыть заведение Сохранение стола', exact: true }).click();
+    await expect(guest.page.getByText('Стол 07', { exact: true })).toBeVisible();
+    await expect(guest.page.getByText('Стол сохранён · ждём подключения кассы', { exact: true })).toBeVisible();
+    await expect(guest.page.getByRole('button', { name: 'Отменить ожидание заказа', exact: true })).toHaveCount(0);
+    expect(await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await employee.page.getByTestId(`service-session-${snapshot.serviceSessions[0].id}`).scrollIntoViewIfNeeded();
+    await employee.page.screenshot({ path: resolve('../svoi-service-staff-320.png') });
+    expect([...employee.errors, ...guest.errors]).toEqual([]);
+  } finally { await employee.context.close(); await guest.context.close(); }
+});
+
+test('service mapping: manager saves real staff/table IDs once; r_keeper then requires only table entry', async ({ browser, request }) => {
+  const managerIdentity = identity('Руководитель столов'); const manager = await session(request, managerIdentity);
+  const guest = await session(request, identity('Гость r_keeper')); const created = await createForManager(request, manager.token, 'Столы r_keeper'); const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'updateServiceFlow', { venueId, serviceFlow: { cashSystem: 'rkeeper', waiterAndroidUrl: '', waiterIosUrl: '' } });
+  const response = await request.post('/api/pos/configure', { headers: { Authorization: `Bearer ${manager.token}` }, data: { venueId, provider: 'rkeeper', config: { objectId: '9876543', token: 'FAKE-LOCAL-TABLE-TEST-NOT-PRODUCTION', closedAtProperty: 'paidAt', openedAtProperty: 'openedAt', currency: 'RUB' } } });
+  expect(response.status()).toBe(200); const connection = await response.json();
+  const employee = await phone(browser, managerIdentity, 320);
+  try {
+    await profile(employee.page); await employee.page.getByRole('button', { name: 'Столы и сотрудники кассы', exact: true }).click();
+    await employee.page.getByRole('button', { name: 'r_keeper · 9876543 · не проверено', exact: true }).click();
+    await employee.page.getByRole('button', { name: 'Добавить соответствие стола', exact: true }).click();
+    await employee.page.getByLabel('Номер стола · 1', { exact: true }).fill('01'); await employee.page.getByLabel('ID стола в кассе · 1', { exact: true }).fill('1');
+    await employee.page.getByLabel('ID официанта · Руководитель столов Проверка', { exact: true }).fill('77');
+    const saved = await resultOf(employee.page, 'configureServiceMapping', () => employee.page.getByRole('button', { name: 'Сохранить связь с кассой', exact: true }).click());
+    expect(saved.serviceMappings.find((item: any) => item.venueId === venueId)).toMatchObject({ connectionId: connection.connectionId, tables: [{ label: '01', posTableId: '1' }], staff: [{ userId: managerIdentity.id, posWaiterId: '77' }] });
+    expect(saved.serviceReadiness.find((item: any) => item.venueId === venueId).ready).toBe(false);
+    await close(employee.page);
+    await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click(); await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode); await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await employee.page.getByLabel('Номер стола', { exact: true }).fill('01');
+    await resultOf(employee.page, 'startService', () => employee.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click());
+    await expect(employee.page.getByText(/Откройте стол 01 в r_keeper/)).toBeVisible();
+    await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0);
+    expect(await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); expect(employee.errors).toEqual([]);
+  } finally { await employee.context.close(); }
+});
+
+test('service history: guest sees only own table order, paid cheque and safe review in both club styles', async ({ browser, request }) => {
+  const manager = await session(request, identity('Команда истории')); const guestIdentity = identity('Гость истории'); const account = await session(request, guestIdentity);
+  const first = await createForManager(request, manager.token, 'Кафе заказов'); const second = await createForManager(request, manager.token, 'Эль Пастор · заказы');
+  const developer = await session(request, developerIdentity);
+  await apiCommand(request, developer.token, 'updateVenueProfile', { venueId: second.result.venueId, guestProfile: { published: true, demo: false, theme: 'elpastor', tagline: 'Мексиканский гастробар', description: '', highlights: [], terms: '', links: {}, features: { loyalty: true, visits: true, reviews: true } } });
+  for (const venueId of [first.result.venueId, second.result.venueId]) await apiCommand(request, manager.token, 'addGuest', { venueId, guestCode: account.guestCode });
+  const guest = await phone(browser, guestIdentity, 320); const now = new Date().toISOString();
+  // Display fixtures only: trusted POS matching/payment are exercised by the
+  // backend tests. The UI never manufactures these order records in production.
+  const common = { guestId: account.guestId, createdAt: now, updatedAt: now, expiresAt: now, canCancel: true, staffUserId: manager.user.id, note: 'ВНУТРЕННЯЯ ЗАМЕТКА', candidates: [{ externalId: 'СКРЫТЫЙ КАНДИДАТ', status: 'open', billMinor: 999999, openedAt: now }] };
+  try {
+    await guest.context.route('**/api/**', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      if (body.db && body.user?.id === guestIdentity.id) body.serviceSessions = [first.result.venueId, second.result.venueId].flatMap(venueId => [
+        { ...common, id: `open-${venueId}`, venueId, tableLabel: '12', status: 'linked', order: { status: 'open', billMinor: 125000, openedAt: now, closedAt: null, items: [{ name: 'Тако с говядиной и соусом из запечённых перцев', quantity: 2, sumMinor: 125000 }], comment: 'СЛУЖЕБНЫЙ КОММЕНТАРИЙ КАССЫ' } },
+        { ...common, id: `paid-${venueId}`, venueId, tableLabel: '05', status: 'closed', order: { status: 'paid', billMinor: 48000, openedAt: now, closedAt: now, items: [{ name: 'Кесадилья', quantity: 1, sumMinor: 48000 }] } },
+        { ...common, id: `review-${venueId}`, venueId, tableLabel: '06', status: 'review', order: { status: 'review', billMinor: 999999, openedAt: now, closedAt: null, items: [{ name: 'НЕ ПОКАЗЫВАТЬ НА СВЕРКЕ', quantity: 1, sumMinor: 999999 }] } },
+        { ...common, id: `foreign-${venueId}`, venueId, guestId: 'different-guest', tableLabel: 'СЕКРЕТНЫЙ ЧУЖОЙ СТОЛ', status: 'linked' },
+      ]);
+      await route.fulfill({ response, json: body });
+    });
+    await guest.page.reload();
+    for (const [name, venueId] of [['Кафе заказов', first.result.venueId], ['Эль Пастор · заказы', second.result.venueId]]) {
+      await guest.page.getByRole('button', { name: `Открыть заведение ${name}`, exact: true }).click();
+      await expect(guest.page.getByText('Ваш стол сейчас', { exact: true })).toBeVisible();
+      await guest.page.getByRole('tab', { name: 'Визиты', exact: true }).click();
+      const order = guest.page.getByTestId(`service-session-open-${venueId}`);
+      await expect(order.getByText('Тако с говядиной и соусом из запечённых перцев', { exact: true })).toBeVisible();
+      await expect(order.getByText(/Итого: 1\s?250 ₽/)).toBeVisible();
+      await expect(guest.page.getByText('Чек оплачен', { exact: true })).toBeVisible();
+      await expect(guest.page.getByText('Заказ на сверке', { exact: true })).toBeVisible();
+      for (const hidden of ['ВНУТРЕННЯЯ ЗАМЕТКА', 'СКРЫТЫЙ КАНДИДАТ', 'СЛУЖЕБНЫЙ КОММЕНТАРИЙ КАССЫ', 'НЕ ПОКАЗЫВАТЬ НА СВЕРКЕ', 'СЕКРЕТНЫЙ ЧУЖОЙ СТОЛ']) await expect(guest.page.getByText(hidden, { exact: true })).toHaveCount(0);
+      await expect(guest.page.getByRole('button', { name: /Подтвердить связь|Отменить ожидание/ })).toHaveCount(0);
+      expect(await guest.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (name.startsWith('Эль')) {
+        expect(await order.getByText('Стол 12', { exact: true }).evaluate(element => getComputedStyle(element).color)).toBe('rgb(255, 241, 218)');
+        await order.scrollIntoViewIfNeeded(); await guest.page.screenshot({ path: resolve('../svoi-service-elpastor-320.png') });
+      }
+      await guest.page.getByRole('button', { name: 'Все заведения', exact: true }).click();
+    }
+    expect(guest.errors).toEqual([]);
+  } finally { await guest.context.close(); }
+});
+
+test('service table: older server snapshot never enables table save or Waiter', async ({ browser, request }) => {
+  const managerIdentity = identity('Старый сервер'); const manager = await session(request, managerIdentity); const guest = await session(request, identity('Гость старого сервера'));
+  const created = await createForManager(request, manager.token, 'Старый сервер кассы'); const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'updateServiceFlow', { venueId, serviceFlow: { cashSystem: 'iiko', waiterAndroidUrl: 'https://example.com/waiter/android', waiterIosUrl: '' } });
+  const employee = await phone(browser, managerIdentity, 320);
+  try {
+    await employee.context.route('**/api/**', async route => { const response = await route.fetch(); const body = await response.json(); if (body.db) { delete body.serviceSessions; delete body.serviceReadiness; delete body.serviceMappings; } await route.fulfill({ response, json: body }); });
+    await employee.page.reload(); await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click(); await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode); await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await expect(employee.page.getByText('Обслуживание стола пока недоступно', { exact: true })).toBeVisible();
+    await expect(employee.page.getByLabel('Номер стола', { exact: true })).toHaveCount(0); await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0); expect(employee.errors).toEqual([]);
+  } finally { await employee.context.close(); }
+});
+
+test('service table: reload after a lost reply does not replay an old meeting, and another employee cannot open Waiter for it', async ({ browser, request }) => {
+  const managerIdentity = identity('Сотрудник повторного стола'); const otherIdentity = identity('Другой сотрудник стола');
+  const manager = await session(request, managerIdentity); const otherAccount = await session(request, otherIdentity); const guest = await session(request, identity('Гость повторного стола'));
+  const created = await createForManager(request, manager.token, 'Повторный стол'); const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'updateServiceFlow', { venueId, serviceFlow: { cashSystem: 'iiko', waiterAndroidUrl: 'https://example.com/waiter/android', waiterIosUrl: '' } });
+  const invitation = await apiCommand(request, manager.token, 'createStaffInvite', { venueId }); await apiCommand(request, otherAccount.token, 'acceptStaffInvite', { code: invitation.result.code });
+  const employee = await phone(browser, managerIdentity, 320); const other = await phone(browser, otherIdentity, 320);
+  const inputs: any[] = []; let drop = true;
+  const openCard = async (page: Page) => { await page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click(); await page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode); await page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click(); await expect(page.getByText('Предпочтения гостя', { exact: true })).toBeVisible(); };
+  try {
+    await employee.context.route('**/api/commands', async route => {
+      if (route.request().postDataJSON().type !== 'startService') { await route.continue(); return; }
+      inputs.push(route.request().postDataJSON()); const response = await route.fetch();
+      if (drop) { drop = false; await route.abort('failed'); } else await route.fulfill({ response });
+    });
+    await openCard(employee.page); await employee.page.getByLabel('Номер стола', { exact: true }).fill('08'); await employee.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click();
+    await expect(employee.page.getByText('Нет связи с сервером. Проверьте интернет и повторите попытку.', { exact: true })).toBeVisible();
+    const first = (await state(request, manager.token)).serviceSessions[0];
+    await employee.page.reload();
+    // Keep sessionStorage's unresolved request across a real browser reload.
+    await apiCommand(request, manager.token, 'cancelService', { venueId, sessionId: first.id });
+    await openCard(employee.page); await expect(employee.page.getByText('Ожидание отменено', { exact: true })).toBeVisible();
+    await employee.page.getByLabel('Номер стола', { exact: true }).fill('08');
+    const next = await resultOf(employee.page, 'startService', () => employee.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click());
+    expect(inputs).toHaveLength(2); expect(inputs[0].previousSessionId).toBeNull(); expect(inputs[1].previousSessionId).toBe(first.id);
+    expect(inputs[1].idempotencyKey).not.toBe(inputs[0].idempotencyKey); expect(next.result.sessionId).not.toBe(first.id);
+    expect(next.serviceSessions.filter((item: any) => item.status === 'awaiting_setup')).toHaveLength(1);
+    await expect(employee.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toBeVisible();
+    await openCard(other.page);
+    await expect(other.page.getByText('Стол закреплён за другим сотрудником. Заказ в кассе оформляет назначенный официант.', { exact: true })).toBeVisible();
+    await expect(other.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toHaveCount(0); await expect(other.page.getByLabel('Номер стола', { exact: true })).toHaveCount(0);
+    await apiCommand(request, manager.token, 'cancelService', { venueId, sessionId: next.result.sessionId });
+    await expect(other.page.getByLabel('Номер стола', { exact: true })).toBeVisible({ timeout: 20000 });
+    await other.page.getByLabel('Номер стола', { exact: true }).fill('08');
+    const third = await resultOf(other.page, 'startService', () => other.page.getByRole('button', { name: 'Сохранить стол', exact: true }).click());
+    expect(third.result.sessionId).not.toBe(next.result.sessionId);
+    expect(third.serviceSessions.find((item: any) => item.id === third.result.sessionId).staffUserId).toBe(otherIdentity.id);
+    await expect(other.page.getByRole('button', { name: 'Перейти в iikoWaiter', exact: true })).toBeVisible();
+    expect([...employee.errors, ...other.errors]).toEqual([]);
+  } finally { await employee.context.close(); await other.context.close(); }
+});
+
+test('service review: manager can select a captured cheque after cancellation or expiry', async ({ browser, request }) => {
+  const managerIdentity = identity('Руководитель сверки'); const manager = await session(request, managerIdentity); const guest = await session(request, identity('Гость сверки'));
+  const created = await createForManager(request, manager.token, 'Сверка после ожидания'); const venueId = created.result.venueId;
+  await apiCommand(request, manager.token, 'addGuest', { venueId, guestCode: guest.guestCode });
+  const employee = await phone(browser, managerIdentity, 320); const now = new Date().toISOString();
+  const candidates = { cancelled: randomUUID(), expired: randomUUID() };
+  try {
+    // Snapshot display fixtures only. Backend tests verify the original-session
+    // guard and payment eligibility when the manager actually confirms a cheque.
+    await employee.context.route('**/api/**', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      if (body.db) body.serviceSessions = (['cancelled', 'expired'] as const).map(status => ({ id: `review-${status}`, venueId, guestId: guest.guestId, tableLabel: status === 'cancelled' ? '01' : '02', status, createdAt: now, updatedAt: now, expiresAt: now, canCancel: false, staffUserId: managerIdentity.id, candidates: [{ externalId: candidates[status], status: 'paid', billMinor: 125000, openedAt: now }] }));
+      await route.fulfill({ response, json: body });
+    });
+    await employee.page.reload(); await employee.page.getByRole('button', { name: 'Сканировать QR гостя', exact: true }).click(); await employee.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(guest.guestCode); await employee.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    for (const status of ['cancelled', 'expired'] as const) {
+      const card = employee.page.getByTestId(`service-session-review-${status}`);
+      await expect(card.getByText(status === 'cancelled' ? 'Сверить чек после отмены ожидания' : 'Сверить чек после истечения ожидания', { exact: true })).toBeVisible();
+      await expect(card.getByRole('button', { name: 'Подтвердить связь с заказом', exact: true })).toHaveCount(0);
+      await card.getByRole('button', { name: new RegExp(candidates[status]) }).click();
+      await expect(card.getByText('Состав и чек выбранного заказа будут доступны этому гостю.', { exact: true })).toBeVisible();
+      await expect(card.getByRole('button', { name: 'Подтвердить связь с заказом', exact: true })).toBeEnabled();
+    }
+    expect(await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); expect(employee.errors).toEqual([]);
+  } finally { await employee.context.close(); }
 });

@@ -9,6 +9,7 @@ import { effectiveGuestProfile } from './venue-profile';
 import { WaiterHandoff } from './waiter-handoff';
 import { WaiterSettings } from './waiter-settings';
 import { GlobalBonusAmount } from './bonus-ui';
+import { ServiceMappingSettings } from './service-mapping';
 export type Panel = null | { kind: 'settings' | 'venues' | 'scan' | 'newGuest' | 'program' | 'review' | 'integrations' | 'joinVenue' | 'acceptInvite' | 'team' } | { kind: 'guest' | 'visit' | 'award' | 'note'; guestId: string } | { kind: 'reply'; reviewId: string } | { kind: 'redeem'; guestId: string; rewardId: string } | { kind: 'pick'; next: 'visit' | 'award' | 'redeem'; rewardId?: string };
 export type PanelProps = { panel: Panel; venue: Venue; role: Role; setPanel: (p: Panel) => void; setVenue: (id: string) => void; setRole: (role: Role) => void; notify: (text: string) => void; openDeveloper: () => void };
 export function useMutation() {
@@ -74,6 +75,7 @@ function Settings(p: FormProps) {
     <Callout>Данные хранятся на сервере. На другом телефоне откройте приложение через тот же аккаунт Telegram.</Callout>
     {staff && <><Txt weight="bold">Ваш режим в «{p.venue.name}»</Txt>{(['staff', 'guest'] as const).map(role => <Button key={role} label={role === 'staff' ? 'Режим сотрудника' : 'Режим гостя'} variant={p.role === role ? 'primary' : 'secondary'} onPress={() => { p.setRole(role); p.setPanel(null); }} />)}</>}
     {staff?.role === 'owner' && <WaiterSettings venue={p.venue} notify={p.notify} />}
+    {staff?.role === 'owner' && <ServiceMappingSettings venueId={p.venue.id} notify={p.notify} />}
     {staff?.role === 'owner' && <Button label="Управление командой" icon="people-outline" onPress={() => p.setPanel({ kind: 'team' })} />}
     {staff && <><View style={[s.card, { gap: 8 }]}><Txt weight="bold">Код клуба для гостей</Txt><Txt selectable weight="extra" style={{ fontSize: 25, letterSpacing: 2 }}>{(p.venue as Venue & { joinCode?: string }).joinCode}</Txt><CopyCode code={(p.venue as Venue & { joinCode?: string }).joinCode ?? ''} label="Скопировать код клуба" /><Txt style={s.caption}>Гость вводит этот код в «Вступить в клуб». Доступ сотрудника он не даёт.</Txt></View><Button label="Интеграции iiko и r_keeper" icon="git-compare-outline" variant="secondary" onPress={() => p.setPanel({ kind: 'integrations' })} /></>}
     <Button label="Вступить в клуб" icon="add" variant="secondary" onPress={() => p.setPanel({ kind: 'joinVenue' })} />
@@ -147,10 +149,10 @@ function GuestProfile(p: FormProps & { guestId: string }) {
     {!!otherNotes.length && <View style={{ gap: 10 }}><Txt weight="bold">Команде на заметку</Txt>{otherNotes.slice(0, 3).map(note => <View key={note.id} style={[s.card, { gap: 8 }]}><Pill label={note.kind === 'thanks' ? 'Есть за что поблагодарить' : 'На заметку'} /><Txt style={{ lineHeight: 22 }}>{note.text}</Txt><Txt style={{ fontSize: 10, color: C.muted }}>{note.author} · {shortDate(note.createdAt)}</Txt></View>)}</View>}
     <View testID="staff-global-balance" style={[s.card, { gap: 8, backgroundColor: C.pale }]}><View style={[s.row, { justifyContent: 'space-between', gap: 12 }]}><Txt weight="bold" style={{ fontSize: 13, lineHeight: 20, flex: 1, minWidth: 0 }}>Глобальные бонусы гостя</Txt><GlobalBonusAmount amount={globalBalance?.balance ?? null} size={24} /></View><Txt style={{ fontSize: 11, lineHeight: 18, color: C.muted }}>Счёт «Своих» · пока только накопление</Txt></View>
     <WaiterHandoff venue={p.venue} guestId={guest.id} />
-    {features.visits && p.venue.serviceFlow?.cashSystem !== 'iiko' && <Button label="Отметить визит" icon="checkmark-circle-outline" onPress={() => p.setPanel({ kind: 'visit', guestId: guest.id })} />}
+    {features.visits && (!p.venue.serviceFlow || p.venue.serviceFlow.cashSystem === 'none') && <Button label="Отметить визит" icon="checkmark-circle-outline" onPress={() => p.setPanel({ kind: 'visit', guestId: guest.id })} />}
     <Button label={more ? 'Скрыть дополнительные действия' : 'Бонусы и другие действия'} variant="ghost" icon={more ? 'chevron-up' : 'ellipsis-horizontal'} onPress={() => setMore(value => !value)} />
     {more && <View style={{ gap: 14 }}>
-      {features.visits && p.venue.serviceFlow?.cashSystem === 'iiko' && <><Callout>Если чек будет загружен из iiko, не отмечайте этот визит вручную: иначе посещение и бонусы могут задвоиться.</Callout><Button label="Отметить визит вручную" variant="ghost" onPress={() => p.setPanel({ kind: 'visit', guestId: guest.id })} /></>}
+      {features.visits && p.venue.serviceFlow && p.venue.serviceFlow.cashSystem !== 'none' && <><Callout>Если чек будет загружен из кассы, не отмечайте этот визит вручную: иначе посещение и бонусы могут задвоиться.</Callout><Button label="Отметить визит вручную" variant="ghost" onPress={() => p.setPanel({ kind: 'visit', guestId: guest.id })} /></>}
       {features.loyalty && <Button label="Начислить бонусы заведения" variant="secondary" icon="gift-outline" onPress={() => p.setPanel({ kind: 'award', guestId: guest.id })} />}
       <Button label="Добавить заметку" variant="ghost" icon="create-outline" onPress={() => p.setPanel({ kind: 'note', guestId: guest.id })} />
       {features.loyalty && <View style={[s.card, { gap: 12 }]}><Txt weight="bold">За бонусы заведения</Txt>{rewards.map(reward => <Button key={reward.id} label={`${reward.name} · ${reward.cost} Б`} disabled={st.balance < reward.cost} variant="ghost" onPress={() => p.setPanel({ kind: 'redeem', guestId: guest.id, rewardId: reward.id })} />)}</View>}

@@ -72,6 +72,28 @@ function terminalOffset(value) {
   return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
 }
 
+const displayText = (value, max = 200) => typeof value === 'string' && value.trim()
+  ? value.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, max) : null;
+function serviceDetails(order, config) {
+  if (!['tableIds', 'waiter', 'whenCreated', 'items', 'comment'].some(key => Object.hasOwn(order, key))) return undefined;
+  // Identity fields are all-or-nothing: dropping an invalid second table could
+  // turn an ambiguous shared order into a seemingly unique guest match.
+  if (order.tableIds != null && (!Array.isArray(order.tableIds) || order.tableIds.length > 20 || order.tableIds.some(id => !nonzeroUuid(id)) ||
+    new Set(order.tableIds.map(id => id.toLowerCase())).size !== order.tableIds.length)) throw malformed();
+  if (order.items != null && (!Array.isArray(order.items) || order.items.length > 500)) throw malformed();
+  const items = (order.items ?? []).filter(item => isRecord(item) && !item.deleted).map(item => {
+    // Product resultSum includes discounts/taxes. Compound components and service
+    // costs are not an equivalent final line total; never manufacture one.
+    let name = item.type === 'Service' ? displayText(item.service?.name) : displayText(item.product?.name);
+    if (item.type === 'Compound') name = [displayText(item.primaryComponent?.product?.name), displayText(item.secondaryComponent?.product?.name)].filter(Boolean).join(' / ').slice(0, 200);
+    return { name: name || 'Позиция заказа', quantity: item.amount,
+      sumMinor: item.type === 'Product' ? minor(item.resultSum) : null };
+  }).filter(item => typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0 && item.quantity <= 1000000);
+  return { tableIds: Array.isArray(order.tableIds) ? order.tableIds.map(id => id.toLowerCase()) : [],
+    waiterId: nonzeroUuid(order.waiter?.id) ? order.waiter.id.toLowerCase() : null,
+    openedAt: localDate(order.whenCreated, config.utcOffsetMinutes), items, comment: displayText(order.comment, 1000) };
+}
+
 export function normalizeIikoOrder(info, rawConfig) {
   const config = validateIikoConfig(rawConfig);
   if (!isRecord(info) || !nonzeroUuid(info.id) || !sameId(info.organizationId, config.organizationId)) throw malformed();
@@ -82,6 +104,8 @@ export function normalizeIikoOrder(info, rawConfig) {
   result.billMinor = minor(order.sum);
   result.customerId = nonzeroUuid(order.customer?.id) ? order.customer.id.toLowerCase() : null;
   result.closedAt = localDate(order.whenClosed, config.utcOffsetMinutes);
+  const service = serviceDetails(order, config);
+  if (service) result.service = service;
   if (order.status === 'New' || order.status === 'Bill') result.status = 'open';
   const processed = minor(order.processedPaymentsSum);
   if (order.status === 'Closed' && result.billMinor > 0 && processed !== null && processed >= result.billMinor && result.closedAt) result.status = 'paid';
@@ -168,6 +192,17 @@ export function createIikoClient(rawConfig, { fetchImpl = fetch, clock = Date.no
       return post(path, body, await getToken());
     }
   }
+  async function fetchReceipts(orderIds) {
+    if (!Array.isArray(orderIds) || !orderIds.length || orderIds.length > 100 || orderIds.some(id => !nonzeroUuid(id))) throw malformed();
+    const selected = [...new Set(orderIds.map(id => id.toLowerCase()))];
+    const reply = await authorized('/api/1/order/by_id', { organizationIds: [config.organizationId], orderIds: selected });
+    if (!Array.isArray(reply.orders) || reply.orders.length !== selected.length) throw new IikoError('IIKO_ORDER_MISSING', 'Заказ ещё не доступен в iiko или доступ ограничен', { retryable: true });
+    return selected.map(orderId => {
+      const matches = reply.orders.filter(item => sameId(item?.id, orderId) && sameId(item?.organizationId, config.organizationId));
+      if (matches.length !== 1) throw new IikoError('IIKO_ORDER_MISSING', 'Заказ ещё не доступен в iiko или доступ ограничен', { retryable: true });
+      return normalizeIikoOrder(matches[0], config);
+    });
+  }
   return {
     async probe() {
       const reply = await authorized('/api/1/organizations', { organizationIds: [config.organizationId], returnAdditionalInfo: true, includeDisabled: false });
@@ -191,12 +226,26 @@ export function createIikoClient(rawConfig, { fetchImpl = fetch, clock = Date.no
               ['Closed', 'Deleted'].every(status => hooks.webHooksFilter.tableOrderFilter.orderStatuses.includes(status)))) };
     },
     async fetchReceipt(orderId) {
-      if (!nonzeroUuid(orderId)) throw malformed();
-      const reply = await authorized('/api/1/order/by_id', { organizationIds: [config.organizationId], orderIds: [orderId.toLowerCase()] });
-      if (!Array.isArray(reply.orders)) throw malformed();
-      const matches = reply.orders.filter(item => sameId(item?.id, orderId) && sameId(item?.organizationId, config.organizationId));
-      if (matches.length !== 1) throw new IikoError('IIKO_ORDER_MISSING', 'Заказ ещё не доступен в iiko или доступ ограничен', { retryable: true });
-      return normalizeIikoOrder(matches[0], config);
+      return (await fetchReceipts([orderId]))[0];
+    },
+    fetchReceipts,
+    async fetchTableReceipts(tableIds, since) {
+      if (!Array.isArray(tableIds) || tableIds.length < 1 || tableIds.length > 100 || tableIds.some(id => !nonzeroUuid(id)) ||
+        typeof since !== 'string' || !Number.isFinite(Date.parse(since))) throw invalid();
+      const selected = [...new Set(tableIds.map(id => id.toLowerCase()))];
+      const dateFrom = new Date(Date.parse(since) + config.utcOffsetMinutes * 60000).toISOString().replace('T', ' ').replace('Z', '');
+      // Read existing orders only. dateFrom is creation time in terminal-local
+      // time; it is never treated as a receipt's true closing time.
+      const reply = await authorized('/api/1/order/by_table', { organizationIds: [config.organizationId], tableIds: selected,
+        statuses: ['New', 'Bill', 'Closed', 'Deleted'], dateFrom });
+      if (!Array.isArray(reply.orders) || reply.orders.length > 1000) throw malformed();
+      const seen = new Set();
+      return reply.orders.map(info => {
+        if (!nonzeroUuid(info?.id) || seen.has(info.id.toLowerCase()) || !Array.isArray(info?.order?.tableIds) ||
+          !info.order.tableIds.some(id => selected.some(tableId => sameId(tableId, id)))) throw malformed();
+        seen.add(info.id.toLowerCase());
+        return normalizeIikoOrder(info, config);
+      });
     },
   };
 }

@@ -3,6 +3,7 @@ import type { GuestVenueProfile } from './venue-profile';
 import type { ServiceFlow } from './service-flow';
 import type { GlobalLedgerEntry } from './global-bonuses';
 export type { GlobalProgram, GlobalWallet, GlobalWalletTransaction, GuestGlobalBalance, GlobalLedgerEntry } from './global-bonuses';
+export type { ServiceSessionView, ServiceReadiness, ServiceMapping } from './service-sessions';
 
 export type Role = 'staff' | 'guest';
 export type NoteKind = 'thanks' | 'preference' | 'note';

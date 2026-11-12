@@ -18,6 +18,7 @@ import { ClubIconButton, ElpastorClubPage, EP } from './elpastor-club';
 import { ElpastorQrSheet } from './elpastor-qr';
 import { GlobalWalletCard, globalEarningDescription } from './bonus-ui';
 import { GlobalWalletDetails } from './global-wallet';
+import { GuestServiceHistory } from './service-ui';
 
 type GuestTab = 'home' | 'visits' | 'bonuses' | 'reviews';
 function VenueArt({ venue, large = false }: { venue: Venue; large?: boolean }) {
@@ -31,7 +32,7 @@ function VenueArt({ venue, large = false }: { venue: Venue; large?: boolean }) {
 }
 
 export function GuestPortal({ onStaff }: { onStaff: (venueId?: string) => void }) {
-  const { db, catalog, user, guestId, guestCode, guestQr, isDeveloper, staffVenues, globalWallet, globalProgram } = useStore();
+  const { db, catalog, user, guestId, guestCode, guestQr, isDeveloper, staffVenues, globalWallet, globalProgram, serviceSessions } = useStore();
   const insets = useSafeAreaInsets();
   const [selectedId, setSelectedId] = useState('');
   const [requestedTab, setTab] = useState<GuestTab>('home');
@@ -59,7 +60,7 @@ export function GuestPortal({ onStaff }: { onStaff: (venueId?: string) => void }
   const hasTransactions = !!venue && db.transactions.some(t => t.venueId === venue.id && t.guestId === guestId);
   const hasReviews = !!venue && db.reviews.some(r => r.venueId === venue.id && r.guestId === guestId);
   const tabs: { id: GuestTab; title: string; icon: IconName }[] = [{ id: 'home', title: 'Заведение', icon: 'storefront-outline' }];
-  if (profile?.features.visits || my?.count) tabs.push({ id: 'visits', title: 'Визиты', icon: 'footsteps-outline' });
+  if (profile?.features.visits || my?.count || serviceSessions?.some(item => item.venueId === venue?.id && item.guestId === guestId)) tabs.push({ id: 'visits', title: 'Визиты', icon: 'footsteps-outline' });
   if (profile?.features.loyalty || hasTransactions || my?.balance) tabs.push({ id: 'bonuses', title: 'Бонусы', icon: 'gift-outline' });
   if (profile?.features.reviews || hasReviews) tabs.push({ id: 'reviews', title: 'Отзывы', icon: 'chatbubbles-outline' });
   const tab = tabs.some(item => item.id === requestedTab) ? requestedTab : 'home';
@@ -95,6 +96,7 @@ export function GuestPortal({ onStaff }: { onStaff: (venueId?: string) => void }
       </View> : tab === 'home' ? club ? <ElpastorClubPage venue={venue} guestName={user?.firstName ?? ''} balance={my?.balance ?? 0} globalBalance={globalWallet?.balance ?? null} globalCaption={globalEarningDescription(globalProgram)} globalPendingReview={globalWallet?.pendingReview} onGlobal={() => setOverlay('global')} tabs={tabs} onQr={() => setOverlay('qr')} onTab={setTab} onLink={url => void openLink(url)} /> : <View style={{ padding: 22, paddingTop: 8, gap: 22 }}>
         <VenueArt venue={venue} large />
         <View style={{ gap: 9 }}><Txt weight="extra" style={{ fontSize: 29, letterSpacing: -0.7 }}>{venue.name}</Txt><Txt style={s.caption}>{venue.kind} · {venue.address}</Txt></View>
+        <GuestServiceHistory venueId={venue.id} activeOnly />
         {profile?.demo && <Callout>Тестовая карточка. Условия клуба ещё не согласованы с заведением.</Callout>}
         <View style={{ gap: 11 }}><Txt weight="extra" style={{ fontSize: 20 }}>{profile?.theme === 'elpastor' ? 'Планы на ваш вечер' : 'Возможности заведения'}</Txt>{([
           ['booking', 'Забронировать стол', 'calendar-outline'], ['menu', 'Посмотреть меню', 'restaurant-outline'], ['telegram', 'Афиша и новости', 'musical-notes-outline'], ['vk', 'Заведение ВКонтакте', 'people-outline'], ['website', 'Сайт заведения', 'globe-outline'],

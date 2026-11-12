@@ -13,6 +13,7 @@ export const RKEEPER_REQUIREMENTS = Object.freeze({
   licensedIntegrationRequired: true,
   customerIdentity: 'Configured extProperties key; opaque identity mapped by the venue owner to a registered guest.',
   closeTime: 'Configured extProperties key containing actual POS closure time with UTC offset; standard GetOrder has no documented closure time.',
+  openTime: 'Optional configured extProperties key with actual opening time and explicit UTC offset; local openTime is not guessed.',
   history: 'GetOrderList has no documented date range, pagination or complete historical guarantee.',
   refunds: 'isReturn has no documented original-order link; requires reconciliation, never awards points.',
 });
@@ -56,7 +57,21 @@ function normalized(row, detail, config, now) {
   else if (typeof row.isFinished === 'boolean' && (row.isFinished === false || (unpaid !== null && unpaid > 0))) status = 'open';
   else if (row.isFinished === true && row.isReturn === false && row.isReserve === false && unpaid === 0 && billMinor > 0 && closedAt &&
     minor(detail?.price?.total) === billMinor && minor(detail?.price?.sumToPay) === 0) status = 'paid';
-  return { provider: 'rkeeper', scope: String(config.objectId), externalId: row.orderGuid.toLowerCase(), status, billMinor, customerId, closedAt };
+  const receipt = { provider: 'rkeeper', scope: String(config.objectId), externalId: row.orderGuid.toLowerCase(), status, billMinor, customerId, closedAt };
+  if (['tableCode', 'waiterId', 'products', 'comment'].some(key => Object.hasOwn(detail ?? {}, key) || Object.hasOwn(row, key)) || config.openedAtProperty) {
+    const code = value => (typeof value === 'number' || typeof value === 'string') && /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? String(Number(value)) : null;
+    const clean = (value, max) => typeof value === 'string' && value.trim() ? value.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, max) : null;
+    if (detail?.products != null && (!Array.isArray(detail.products) || detail.products.length > 500)) fail('RESPONSE', 'Некорректные позиции заказа r_keeper');
+    const tableId = code(detail?.tableCode ?? row.tableCode);
+    receipt.service = { tableIds: tableId ? [tableId] : [], waiterId: code(detail?.waiterId ?? row.waiterId),
+      openedAt: config.openedAtProperty && Object.hasOwn(props, config.openedAtProperty) ? closeTime(props[config.openedAtProperty], now) : null,
+      items: (detail?.products ?? []).filter(item => object(item) && !item.voidReason && !item.voidingReason).map(item => ({
+        name: clean(item.name, 200) || 'Позиция заказа', quantity: typeof item.quantity === 'number' ? item.quantity : Number(item.quantity),
+        // White Server documents unit price, not a final discounted line total.
+        sumMinor: null,
+      })).filter(item => Number.isFinite(item.quantity) && item.quantity > 0 && item.quantity <= 1000000), comment: clean(detail?.comment, 1000) };
+  }
+  return receipt;
 }
 
 /** Credentials are server-only. No caller-selected host: avoid sending tokens to arbitrary URLs. */
@@ -65,7 +80,7 @@ export function createRkeeperClient(config, { fetchImpl = globalThis.fetch, wait
   const objectId = Number(config.objectId);
   if (!Number.isSafeInteger(objectId) || objectId <= 0) fail('CONFIG', 'Укажите код ресторана objectId');
   if (config.baseUrl !== undefined && config.baseUrl !== ENDPOINT) fail('CONFIG', 'Адрес White Server не поддерживается');
-  const settings = { objectId, customerIdProperty: propertyName(config.customerIdProperty), closedAtProperty: propertyName(config.closedAtProperty) };
+  const settings = { objectId, customerIdProperty: propertyName(config.customerIdProperty), closedAtProperty: propertyName(config.closedAtProperty), openedAtProperty: propertyName(config.openedAtProperty) };
   const token = config.token;
   const maxOrders = config.maxOrders ?? 500;
   if (!Number.isSafeInteger(maxOrders) || maxOrders < 1 || maxOrders > 2000) fail('CONFIG', 'Лимит заказов должен быть от 1 до 2000');
@@ -137,21 +152,19 @@ export function createRkeeperClient(config, { fetchImpl = globalThis.fetch, wait
         .sort((a, b) => String(b.openTime ?? b.createTime ?? '').localeCompare(String(a.openTime ?? a.createTime ?? ''))).slice(0, 8);
       for (const row of candidates) {
         const receipt = normalized(row, await readOrder(row, deadline), settings, clock());
-        if (receipt.status === 'paid' && receipt.customerId) return { ok: true, provider: 'rkeeper', scope: String(objectId), orderCount: rows.length };
+        if (receipt.status === 'paid' && (receipt.customerId || (receipt.service?.tableIds.length === 1 && receipt.service.waiterId && receipt.service.openedAt))) return { ok: true, provider: 'rkeeper', scope: String(objectId), orderCount: rows.length };
       }
-      fail('SETUP', 'Нужен закрытый оплаченный пробный чек с заполненными полями клиента и времени закрытия с часовым поясом');
+      fail('SETUP', 'Нужен оплаченный пробный чек с временем закрытия и либо клиентом, либо столом, официантом и временем открытия с часовым поясом');
     },
     async poll() {
       const deadline = clock() + 120000;
       const rows = await list(deadline); const receipts = new Array(rows.length); let cursor = 0;
-      // Read details only where a closed/changed receipt needs identity/reconciliation.
+      // Open orders need details too: table, waiter and dishes drive service cards.
       // A failure rejects the whole poll: the caller never advances with a partial batch.
       async function worker() {
         while (cursor < rows.length) {
-          const index = cursor++; const row = rows[index]; let detail = null;
-          if (row.isFinished === true || row.isReturn === true) {
-            detail = await readOrder(row, deadline);
-          }
+          const index = cursor++; const row = rows[index];
+          const detail = await readOrder(row, deadline);
           receipts[index] = normalized(row, detail, settings, clock());
         }
       }

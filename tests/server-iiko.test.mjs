@@ -21,6 +21,36 @@ test('iiko normalizes verified closed payment in integer kopecks and explicit lo
   assert.equal(normalizeIikoOrder(info({ customer: { id: '00000000-0000-0000-0000-000000000000' } }), config).customerId, null);
 });
 
+test('iiko service metadata uses Cloud table IDs, terminal-local opening time and final line sums without inventing compound totals', () => {
+  const value = normalizeIikoOrder(info({ tableIds: [other], whenCreated: '2026-11-10 12:00:00.000', waiter: { id: customer, phone: 'private' },
+    comment: 'Kitchen only', items: [
+      { type: 'Product', product: { name: 'Тако' }, amount: 2, price: 100, resultSum: 150 },
+      { type: 'Product', product: { name: 'Удалено' }, amount: 1, resultSum: 100, deleted: { reason: 'void' } },
+      { type: 'Compound', primaryComponent: { product: { name: 'Первая половина' }, resultSum: 100 }, secondaryComponent: { product: { name: 'Вторая половина' } }, amount: 1 },
+      { type: 'Service', service: { name: 'Подача' }, amount: 1, cost: 15 },
+    ] }), config);
+  assert.deepEqual(value.service, { tableIds: [other], waiterId: customer, openedAt: '2026-11-10T09:00:00.000Z', comment: 'Kitchen only', items: [
+    { name: 'Тако', quantity: 2, sumMinor: 15000 }, { name: 'Первая половина / Вторая половина', quantity: 1, sumMinor: null }, { name: 'Подача', quantity: 1, sumMinor: null },
+  ] });
+  assert.equal(JSON.stringify(value).includes('private'), false);
+  assert.equal(value.billMinor, 20050);
+  for (const tableIds of [[other, 'malformed-table'], [other, other.toUpperCase()], 'not-an-array']) {
+    assert.throws(() => normalizeIikoOrder(info({ tableIds }), config), /неполные/);
+  }
+});
+
+test('iiko table discovery reads one scoped candidate batch with terminal-local dateFrom and rejects cross-table or duplicate data', async () => {
+  const calls = []; let orders = [info({ tableIds: [other] })];
+  const client = createIikoClient(config, { fetchImpl: async (url, options) => {
+    if (url.endsWith('/access_token')) return response({ token: 'test-access-token' });
+    assert.equal(new URL(url).pathname, '/api/1/order/by_table'); calls.push(JSON.parse(options.body)); return response({ orders });
+  } });
+  assert.equal((await client.fetchTableReceipts([other], '2026-11-10T09:00:00.000Z')).length, 1);
+  assert.deepEqual(calls[0], { organizationIds: [org], tableIds: [other], statuses: ['New', 'Bill', 'Closed', 'Deleted'], dateFrom: '2026-11-10 12:00:00.000' });
+  orders = [info({ tableIds: [customer] })]; await assert.rejects(client.fetchTableReceipts([other], '2026-11-10T09:00:00Z'));
+  orders = [info({ tableIds: [other] }), info({ tableIds: [other] })]; await assert.rejects(client.fetchTableReceipts([other], '2026-11-10T09:00:00Z'));
+});
+
 test('iiko does not invent payments, closing times or refunds from partial vendor data', () => {
   for (const patch of [{ processedPaymentsSum: null }, { processedPaymentsSum: 199 }, { processedPaymentsSum: '200.50' },
     { sum: -10 }, { sum: 0 }, { sum: 1.001 }, { sum: Infinity }, { sum: null }, { whenClosed: null },
