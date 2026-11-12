@@ -24,7 +24,7 @@ export function ElpastorQrSheet({ value, code, guestName, venueName, demo, onClo
       <View style={q.identity}><Txt style={q.label}>ГОСТЬ</Txt><Txt weight="bold" style={q.name}>{guestName.trim() || 'Ваш личный профиль'}</Txt></View>
       <GuestQr value={value} code={code} variant="elpastor" />
       <Txt style={q.instruction}>Покажите карту сотруднику «{venueName}». Этот QR остаётся вашим во всех заведениях «Своих».</Txt>
-      {demo && <View style={q.notice}><Icon name="information-circle-outline" size={17} color="#E6BB8E" /><Txt style={q.noticeText}>Тестовая карточка. Показ QR не создаёт визит и не начисляет бонусы.</Txt></View>}
+      {demo && <View style={q.notice}><Icon name="information-circle-outline" size={17} color="#E6BB8E" /><Txt style={q.noticeText}>Тестовая карточка. Анкета появится после подтверждения визита сотрудником.</Txt></View>}
       <View style={q.footer}><View style={q.footerLine} /><Txt style={q.footerText}>СВОИ · ЛИЧНАЯ КАРТА</Txt><View style={q.footerLine} /></View>
     </View>
   </Sheet>;

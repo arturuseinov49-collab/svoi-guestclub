@@ -8,6 +8,7 @@ export interface GuestVenueProfile {
   terms: string;
   links: { menu?: string; booking?: string; telegram?: string; vk?: string; website?: string };
   features: { loyalty: boolean; visits: boolean; reviews: boolean };
+  feedbackEnabled?: boolean;
 }
 
 export function defaultGuestProfile(): GuestVenueProfile {
@@ -24,6 +25,7 @@ export function effectiveGuestProfile(venue: { guestProfile?: GuestVenueProfile 
     tagline: p.tagline, description: p.description, highlights: [...p.highlights], terms: p.terms,
     links: Object.fromEntries(Object.entries(p.links).filter(([key]) => ['menu', 'booking', 'telegram', 'vk', 'website'].includes(key))),
     features: { loyalty: p.features.loyalty, visits: p.features.visits, reviews: p.features.reviews },
+    feedbackEnabled: p.feedbackEnabled ?? p.published === true,
   };
 }
 
@@ -43,7 +45,7 @@ function flag(value: unknown, label: string): boolean {
 }
 export function validateGuestProfile(input: unknown): GuestVenueProfile {
   const fields = ['published', 'demo', 'theme', 'tagline', 'description', 'highlights', 'terms', 'links', 'features'];
-  const p = object(input, fields, fields, 'Карточка заведения');
+  const p = object(input, [...fields, 'feedbackEnabled'], fields, 'Карточка заведения');
   if (typeof p.theme !== 'string' || !['svoi', 'elpastor'].includes(p.theme)) throw new Error('Выберите оформление карточки');
   if (!Array.isArray(p.highlights) || p.highlights.length > 6) throw new Error('Особенности: не более 6 пунктов');
   const highlights = p.highlights.map(value => text(value, 60, 'Особенность'));
@@ -64,5 +66,6 @@ export function validateGuestProfile(input: unknown): GuestVenueProfile {
     tagline: text(p.tagline, 120, 'Короткое описание'), description: text(p.description, 1200, 'Описание'), highlights,
     terms: text(p.terms, 1500, 'Условия'), links: cleanLinks,
     features: { loyalty: flag(features.loyalty, 'Бонусы'), visits: flag(features.visits, 'Визиты'), reviews: flag(features.reviews, 'Отзывы') },
+    ...(p.feedbackEnabled === undefined ? {} : { feedbackEnabled: flag(p.feedbackEnabled, 'Анкеты после визита') }),
   };
 }

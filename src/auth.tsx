@@ -12,9 +12,9 @@ export function LoginScreen() {
   return <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24, paddingVertical: 34, gap: 25 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}><View {...fx('brand')} style={{ backgroundColor: C.pine, padding: 12, borderRadius: 18, overflow: 'hidden' }}><Icon name="leaf" color={C.lime} size={25} /></View><Txt weight="extra" style={{ fontSize: 37, letterSpacing: -1.8 }}>свои</Txt><View style={{ flex: 1 }} /><Icon name="sparkles-outline" size={22} color={C.orange} /></View>
     <View {...fx('hero')} style={{ backgroundColor: C.lime, borderRadius: 30, borderWidth: 1, borderColor: '#FFFFFFB3', padding: 24, gap: 19, overflow: 'hidden' }}>
-      <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#FFFFFF85', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20 }}><Icon name="sparkles" size={12} color={C.pine} /><Txt weight="bold" style={{ fontSize: 9, letterSpacing: 0.7, color: C.pine }}>КЛУБ ХОРОШИХ ПРИВЫЧЕК</Txt></View>
+      <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#FFFFFF85', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20 }}><Icon name="sparkles" size={12} color={C.pine} /><Txt weight="bold" style={{ fontSize: 9, letterSpacing: 0.7, color: C.pine }}>МЕСТА, ГДЕ ВАС СЛЫШАТ</Txt></View>
       <Txt weight="extra" style={{ fontSize: 38, lineHeight: 43, letterSpacing: -1.7 }}>{'Свои люди.\nСвой аккаунт.'}</Txt>
-      <Txt style={{ fontSize: 14, lineHeight: 23, color: C.pine }}>Бонусы, визиты и любимые места — с вами на любом телефоне.</Txt>
+      <Txt style={{ fontSize: 14, lineHeight: 23, color: C.pine }}>Ваши впечатления помогают любимым местам становиться лучше.</Txt>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginTop: 3 }}><Txt weight="semibold" style={{ fontSize: 12, color: C.pine, flex: 1 }}>Быть своим — приятно</Txt><View {...fx('foil')} style={{ width: 54, height: 54, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: C.lavender, overflow: 'hidden' }}><Icon name="paper-plane" size={25} color={C.pine} /></View></View>
     </View>
     {loading ? <View style={{ alignItems: 'center', gap: 12 }}><ActivityIndicator color={C.ink} /><Txt>Входим через Telegram…</Txt></View> : <><Button label="Войти через Telegram" icon="paper-plane-outline" onPress={openTelegram} /><Txt style={[s.caption, { textAlign: 'center' }]}>Откройте бота, нажмите «Начать», затем «Открыть “Свои”». Вход произойдёт автоматически.</Txt></>}
@@ -38,7 +38,7 @@ export function WelcomeScreen({ onReady, onDeveloper, showSyncStatus = true }: {
     <Callout>{mode === 'staff' ? 'Сотруднику код выдаёт руководитель. Руководитель получает приглашение от разработчика «Своих». Код действует один раз в течение 24 часов.' : 'Покажите сотруднику свой QR — он добавит вас в клуб и отметит визит. Или вступите в клуб по коду заведения.'}</Callout>
     {!!m.error && <Txt accessibilityRole="alert" style={{ color: C.red }}>{m.error}</Txt>}
     <Button label={mode === 'staff' ? 'Принять приглашение' : 'Вступить в клуб'} loading={m.busy} disabled={!code.trim()} onPress={() => void m.run({ type: mode === 'staff' ? 'acceptStaffInvite' : 'joinVenue', code: code.trim().toUpperCase() }, result => { if (result.venueId) onReady(result.venueId, mode === 'staff'); })} />
-    <Txt style={s.caption}>Заведения добавляет команда «Своих». Ваш профиль и бонусы доступны на любом телефоне через Telegram.</Txt>
+    <Txt style={s.caption}>Заведения добавляет команда «Своих». Ваш профиль, визиты и отзывы доступны на любом телефоне через Telegram.</Txt>
     {!!logoutError && <Txt style={{ color: C.red }}>{logoutError}</Txt>}<Button label="Выйти из аккаунта" variant="ghost" onPress={() => void logout().catch(e => setLogoutError(e.message))} />
   </ScrollView>;
 }

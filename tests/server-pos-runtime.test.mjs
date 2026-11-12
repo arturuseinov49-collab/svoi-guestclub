@@ -234,46 +234,17 @@ test('POS unresolved r_keeper return cannot be bypassed by probing again and ena
   assert.throws(() => f.runtime.setEnabled(f.owner.user.id, connectionId, true), statusError(409)); assert.equal(f.balance(), 0);
 });
 
-test('POS HTTP routes enforce bearer, owner, venue and origin boundaries; webhook cannot ingest client-supplied receipts', async t => {
-  const app = createApplication({ dataPath: ':memory:', publicUrl: 'https://svoi.test', botToken: 'test-only', rateLimits: false, developerIds: [900000001],
-    posOptions: { masterKey: randomBytes(32).toString('base64'), fetchImpl: async () => { throw new Error('No vendor call expected'); } } });
+test('retired POS HTTP endpoints and webhooks cannot create connections or ingest events', async t => {
+  const app = createApplication({ dataPath: ':memory:', publicUrl: 'https://svoi.test', botToken: 'test-only', rateLimits: false });
   await new Promise(done => app.server.listen(0, '127.0.0.1', done)); t.after(() => app.close());
   const origin = `http://127.0.0.1:${app.server.address().port}`;
-  const login = id => app.store.login({ id, firstName: 'Тест', lastName: '', username: null });
-  const owner = login(3001); const guest = login(3002); const staff = login(3003); const stranger = login(3004);
-  const command = (user, type, fields = {}) => app.store.command(user.user.id, { type, idempotencyKey: randomUUID(), ...fields });
-  const developer = login(900000001);
-  const venue = command(developer, 'createVenue', { name: 'HTTP касса', kind: 'Кафе', address: 'Тестовый адрес' }).result;
-  app.store.sql.prepare("INSERT INTO staff(venue_id,user_id,role) VALUES (?,?,'owner')").run(venue.venueId, owner.user.id);
-  command(staff, 'acceptStaffInvite', { code: command(owner, 'createStaffInvite', { venueId: venue.venueId }).result.code });
-  async function request(path, user, body, headers = {}) {
-    const reply = await fetch(origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(user ? { Authorization: `Bearer ${user.token}` } : {}),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: reply.status, body: await reply.json(), cache: reply.headers.get('cache-control') };
+  const before = app.store.read();
+  for (const path of ['status?venueId=unknown', 'configure', 'probe', 'enabled', 'bind', 'webhook-setup', `webhooks/iiko/${randomUUID()}`]) {
+    for (const method of ['GET', 'POST']) {
+      const response = await fetch(`${origin}/api/pos/${path}`, { method, headers: { 'Content-Type': 'application/json' }, ...(method === 'POST' ? { body: JSON.stringify({ config: {}, order: {} }) } : {}) });
+      assert.equal(response.status, 410); assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
   }
-  const statusPath = `/api/pos/status?venueId=${venue.venueId}`;
-  assert.equal((await request(statusPath)).status, 401);
-  assert.equal((await request(statusPath, guest)).status, 403);
-  assert.equal((await request(statusPath, stranger)).status, 403);
-  const input = { venueId: venue.venueId, provider: 'iiko', config };
-  assert.equal((await request('/api/pos/configure', staff, input)).status, 403);
-  assert.equal((await request('/api/pos/configure', owner, input, { Origin: 'https://foreign.example' })).status, 403);
-  assert.equal((await request('/api/pos/configure', owner, [])).status, 400);
-  const configured = await request('/api/pos/configure', owner, input); assert.equal(configured.status, 200);
-  const { connectionId } = configured.body;
-  const status = await request(statusPath, staff); assert.equal(status.status, 200); assert.equal(status.cache, 'no-store');
-  assert.equal(status.body.connections[0].enabled, false); assert.ok(!JSON.stringify(status.body).includes(config.apiKey));
-  assert.equal((await request('/api/pos/enabled', staff, { connectionId, enabled: false })).status, 403);
-  assert.equal((await request('/api/pos/enabled', stranger, { connectionId, enabled: false })).status, 403);
-  assert.equal((await request('/api/pos/enabled', owner, { connectionId, enabled: true })).status, 409);
-  assert.equal((await request('/api/pos/webhook-setup', staff, { connectionId })).status, 403);
-  const setup = await request('/api/pos/webhook-setup', owner, { connectionId }); assert.equal(setup.status, 200); assert.ok(setup.body.webhookToken);
-  const hookPath = `/api/pos/webhooks/iiko/${connectionId}`;
-  assert.equal((await request(hookPath, null, event(), { Authorization: 'forged-secret' })).status, 401);
-  assert.equal(app.store.sql.prepare('SELECT COUNT(*) AS n FROM pos_jobs').get().n, 0);
-  assert.equal((await request(hookPath, owner, event())).status, 401);
-  assert.equal((await request(hookPath, null, event({ order: { status: 'Closed', sum: 1000000 } }), { Authorization: setup.body.webhookToken })).status, 200);
-  assert.equal(app.store.read().visits.length, 0); assert.equal(app.store.read().transactions.length, 0);
-  assert.equal(app.store.sql.prepare('SELECT COUNT(*) AS n FROM pos_jobs').get().n, 1);
-  assert.equal((await request('/api/pos/import', owner, { connectionId, externalId: orderId, status: 'paid', billMinor: 100000 })).status, 404);
+  assert.equal(app.pos, undefined); assert.deepEqual(app.store.read(), before);
+  assert.equal(app.store.sql.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='pos_jobs'").get().n, 0);
 });

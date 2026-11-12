@@ -1,11 +1,9 @@
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { Venue, money } from './domain';
+import { Venue } from './domain';
 import { effectiveGuestProfile } from './venue-profile';
 import { ElpastorArt } from './elpastor-art';
 import { Icon, IconName, Txt, fx } from './ui';
-import { GlobalWalletCard } from './bonus-ui';
-import { GuestServiceHistory } from './service-ui';
 
 export const EP = { bg: '#210911', surface: '#350F1C', cream: '#FFF1DA', gold: '#E6BB8E', muted: '#C5A995', border: '#75404A' };
 
@@ -27,10 +25,10 @@ export function ClubNotice({ children }: React.PropsWithChildren) {
   return <View style={c.notice}><Icon name="information-circle-outline" color={EP.gold} size={17} /><Txt style={{ flex: 1, color: EP.muted, fontSize: 11, lineHeight: 18 }}>{children}</Txt></View>;
 }
 
-type GuestTab = 'home' | 'visits' | 'bonuses' | 'reviews';
-type Props = { venue: Venue; guestName: string; balance: number; globalBalance: number | null; globalCaption: string; globalPendingReview?: boolean; onGlobal: () => void; tabs: { id: GuestTab; title: string; icon: IconName }[]; onQr: () => void; onTab: (tab: GuestTab) => void; onLink: (url: string) => void };
+type GuestTab = 'home' | 'visits' | 'reviews';
+type Props = { venue: Venue; guestName: string; pendingCount: number; onReview: () => void; tabs: { id: GuestTab; title: string; icon: IconName }[]; onQr: () => void; onTab: (tab: GuestTab) => void; onLink: (url: string) => void };
 
-export function ElpastorClubPage({ venue, guestName, balance, globalBalance, globalCaption, globalPendingReview, onGlobal, tabs, onQr, onTab, onLink }: Props) {
+export function ElpastorClubPage({ venue, guestName, pendingCount, onReview, tabs, onQr, onTab, onLink }: Props) {
   const profile = effectiveGuestProfile(venue);
   return <View testID="elpastor-club-page" style={c.page}>
     <View style={c.clubCard}>
@@ -42,7 +40,7 @@ export function ElpastorClubPage({ venue, guestName, balance, globalBalance, glo
       <View style={{ padding: 16, paddingTop: 0 }}><ClubButton label="Показать мой QR" subtitle="Личный код для визита" icon="qr-code-outline" tone="gold" onPress={onQr} /></View>
     </View>
     <View style={c.location}><Icon name="location-outline" size={15} color={EP.gold} /><Txt style={{ flex: 1, color: EP.muted, fontSize: 11, lineHeight: 18 }}>{venue.address}</Txt></View>
-    <GuestServiceHistory venueId={venue.id} theme="elpastor" activeOnly />
+    <View {...fx('club-panel')} style={c.panel}><Txt style={c.eyebrow}>ВАШ ГОЛОС В ЭТОМ МЕСТЕ</Txt><Txt style={c.heading}>{pendingCount ? 'Как прошёл вечер?' : 'Впечатления остаются'}</Txt><Txt style={c.body}>{pendingCount ? 'Пять коротких вопросов о вашем визите. Расскажите, что понравилось и что сделает следующую встречу лучше.' : 'После визита поделитесь впечатлениями с командой. Ваши ответы помогут сделать следующую встречу ещё приятнее.'}</Txt>{pendingCount > 0 && <ClubButton label="Оценить визит" subtitle={pendingCount > 1 ? `Ждут оценки: ${pendingCount}` : 'Лично вам и команде гастробара'} icon="chatbubble-ellipses-outline" tone="gold" onPress={onReview} />}</View>
     <View style={{ gap: 12 }}><View style={c.sectionTitle}><Txt style={c.heading}>Планы на ваш вечер</Txt><Txt style={{ color: EP.gold, fontSize: 17 }}>✦</Txt></View>
       {([
         ['booking', 'Забронировать стол', 'Выбрать дату и время', 'calendar-outline'],
@@ -50,16 +48,12 @@ export function ElpastorClubPage({ venue, guestName, balance, globalBalance, glo
         ['telegram', 'Афиша и новости', 'Музыка, встречи и гастроужины', 'musical-notes-outline'],
       ] as const).map(([key, label, subtitle, icon]) => profile.links[key] ? <ClubButton key={key} label={label} subtitle={subtitle} icon={icon} onPress={() => onLink(profile.links[key]!)} /> : null)}
     </View>
-    {profile.demo && <ClubNotice>Тестовая карточка. Условия клуба ещё не согласованы с заведением.</ClubNotice>}
-    {profile.features.loyalty && <Pressable {...fx('club-panel')} accessibilityRole="button" accessibilityLabel="Открыть мои бонусы" onPress={() => onTab('bonuses')} style={c.panel}><Txt style={c.eyebrow}>БОНУСЫ ЗАВЕДЕНИЯ</Txt><Txt style={{ fontFamily: 'CormorantGaramondBold', fontSize: 38, color: EP.cream }}>{money(balance)} Б</Txt><Txt style={c.body}>Действуют в «{venue.name}». Условия и комплименты →</Txt></Pressable>}
-    <GlobalWalletCard balance={globalBalance} caption={globalCaption} pendingReview={globalPendingReview} onPress={onGlobal} theme="elpastor" />
+    {profile.demo && <ClubNotice>Тестовая карточка. Запуск обратной связи согласуется с заведением.</ClubNotice>}
     <View style={{ gap: 14 }}><Txt style={c.heading}>Hola, amigo</Txt>{!!profile.description && <Txt style={c.body}>{profile.description}</Txt>}<View style={c.highlights}>{profile.highlights.map(label => <View key={label} style={c.chip}><Txt style={{ fontSize: 10, lineHeight: 16, color: EP.gold }}>{label}</Txt></View>)}</View>
       {([
         ['vk', 'Заведение ВКонтакте', 'people-outline'], ['website', 'Сайт заведения', 'globe-outline'],
       ] as const).map(([key, label, icon]) => profile.links[key] ? <ClubButton key={key} label={label} icon={icon} tone="quiet" onPress={() => onLink(profile.links[key]!)} /> : null)}
     </View>
-    {!!profile.terms && <View {...fx('club-panel')} style={c.panel}><Txt style={c.eyebrow}>УСЛОВИЯ КЛУБА</Txt><Txt style={c.body}>{profile.terms}</Txt></View>}
-    {!profile.features.loyalty && <Txt style={{ color: EP.muted, fontSize: 11, lineHeight: 18 }}>Бонусная программа пока не подключена. Условия появятся после согласования с заведением.</Txt>}
     {tabs.length > 1 && <View style={{ gap: 10 }}><Txt style={c.heading}>Ваша история</Txt>{tabs.filter(item => item.id !== 'home').map(item => <ClubButton key={item.id} label={`Мои ${item.title.toLowerCase()}`} icon={item.icon} tone="quiet" onPress={() => onTab(item.id)} />)}</View>}
     <View style={c.footer}><View style={c.line} /><Txt style={{ color: EP.muted, fontSize: 8, letterSpacing: 2 }}>ЭЛЬ ПАСТОР · СВОИ</Txt><View style={c.line} /></View>
   </View>;

@@ -25,7 +25,6 @@ export function VenueProfileEditor({ profile, busy, onSave, onCancel }: { profil
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const change = (next: Partial<GuestVenueProfile>) => { setDraft(value => ({ ...value, ...next })); setError(''); setSaved(false); };
-  const feature = (key: keyof GuestVenueProfile['features'], value: boolean) => change({ features: { ...draft.features, [key]: value } });
   const save = async () => {
     setError(''); setSaved(false);
     const items = highlights.split('\n').map(item => item.trim()).filter(Boolean);
@@ -60,11 +59,9 @@ export function VenueProfileEditor({ profile, busy, onSave, onCancel }: { profil
     <Txt style={[s.caption, { marginTop: -10 }]}>До 6 коротких особенностей, по 60 символов.</Txt>
     <Field label="Условия для гостей" placeholder="Условия, согласованные именно с этим заведением" value={draft.terms} onChangeText={terms => change({ terms })} multiline maxLength={1500} editable={!busy} />
     <View><Section title="Доступные действия" />
-      <Toggle label="Бонусная программа" description="Начисления и комплименты. Правила задаются в программе заведения." value={draft.features.loyalty} disabled={busy} onChange={value => feature('loyalty', value)} />
-      <Toggle label="Визиты гостей" description="Команда сможет отмечать визиты, а гость — смотреть свою историю." value={draft.features.visits} disabled={busy} onChange={value => feature('visits', value)} />
-      <Toggle label="Отзывы гостей" description="После посещения гость сможет оставить отзыв этому заведению." value={draft.features.reviews} disabled={busy} onChange={value => feature('reviews', value)} />
+      <Toggle label="Анкеты после визита" description="Команда отмечает визит и предпочтения гостя. Гость оценивает заведение по пунктам и оставляет комментарий." value={draft.feedbackEnabled ?? draft.published} disabled={busy} onChange={feedbackEnabled => change({ feedbackEnabled })} />
     </View>
-    <Callout>Включайте только согласованные возможности. Отключение не удаляет сохранённую историю; без бонусной программы новые бонусы не начисляются.</Callout>
+    <Callout>Предпочтения и отзывы о госте доступны только команде заведения. Отзыв гостя видят его автор и команда. Отключение анкет сохраняет историю.</Callout>
     <View style={{ gap: 16 }}><Section title="Официальные ссылки" />{linkFields.map(({ key, label }) => <Field key={key} label={label} placeholder="https://…" value={draft.links[key] ?? ''} onChangeText={value => change({ links: { ...draft.links, [key]: value } })} keyboardType="url" autoCapitalize="none" autoCorrect={false} maxLength={600} editable={!busy} />)}<Txt style={s.caption}>Добавляйте проверенные страницы заведения. Пустая ссылка скроет соответствующую кнопку.</Txt></View>
     {!!error && <Txt accessibilityRole="alert" style={{ color: C.red, fontSize: 12, lineHeight: 20 }}>{error}</Txt>}
     {saved && <Callout icon="checkmark-circle-outline">{draft.published ? 'Карточка сохранена и доступна в каталоге гостей.' : 'Карточка сохранена. В общем каталоге она пока скрыта.'}</Callout>}

@@ -9,6 +9,7 @@ import type { ServiceMapping, ServiceReadiness, ServiceSessionView } from './ser
 export interface Account { id: number; firstName: string; lastName: string; username: string | null }
 export interface StaffVenue { venueId: string; role: 'owner' | 'staff' }
 export interface Snapshot {
+  productMode?: 'feedback';
   db: Database; catalog: Venue[]; user: Account; guestId: string; guestCode: string; guestQr: string; isDeveloper: boolean; staffVenues: StaffVenue[];
   globalProgram?: GlobalProgram | null;
   globalWallet?: GlobalWallet | null;
@@ -19,7 +20,7 @@ export interface Snapshot {
 }
 export interface StaffMember { userId: number; name: string; role: 'owner' | 'staff' }
 export interface ManagedVenue { id: string; name: string; kind: string; address: string; joinCode: string; guestProfile: GuestVenueProfile; managers: { userId: number; name: string }[]; guestCount: number; staffCount: number }
-export interface CommandResult { venueId?: string; guestId?: string; sessionId?: string; earned?: number; code?: string; expiresAt?: string; members?: StaffMember[]; managedVenues?: ManagedVenue[] }
+export interface CommandResult { venueId?: string; guestId?: string; visitId?: string; feedbackId?: string; sessionId?: string; earned?: number; code?: string; expiresAt?: string; members?: StaffMember[]; managedVenues?: ManagedVenue[] }
 export type Command = { type: string; [key: string]: unknown };
 export type PosAction = 'status' | 'configure' | 'probe' | 'enabled' | 'bind' | 'webhook-setup';
 const emptyDatabase = (): Database => ({ version: 1, venues: [], guests: [], memberships: [], visits: [], notes: [], reviews: [], transactions: [] });

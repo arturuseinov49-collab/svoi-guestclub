@@ -62,7 +62,7 @@ export function DeveloperPanel({ onClose }: { onClose: () => void }) {
       <Field label="Название заведения" placeholder="Например, Кофейня на углу" value={name} onChangeText={setName} maxLength={70} />
       <Field label="Формат" value={kind} onChangeText={setKind} maxLength={50} />
       <Field label="Адрес" placeholder="Город, улица, дом" value={address} onChangeText={setAddress} maxLength={150} />
-      <Txt style={s.caption}>После создания настройте карточку для гостей и выдайте код руководителю. В общем каталоге новое место скрыто до публикации; условия программы согласуйте отдельно.</Txt>
+      <Txt style={s.caption}>После создания настройте карточку для гостей и выдайте код руководителю. В общем каталоге новое место скрыто до публикации; порядок обратной связи согласуйте отдельно.</Txt>
       <Button label="Создать заведение" icon="storefront-outline" loading={busy} disabled={name.trim().length < 2 || kind.trim().length < 2 || address.trim().length < 2} onPress={() => void run({ type: 'createVenue', name: name.trim(), kind: kind.trim(), address: address.trim() }, () => { setName(''); setAddress(''); setCreating(false); setNotice('Заведение создано. Теперь пригласите руководителя.'); })} />
     </View>}
     <View style={[s.row, { justifyContent: 'space-between' }]}><Txt weight="extra" style={{ fontSize: 19 }}>Все заведения</Txt><Button label="Обновить" icon="sync-outline" variant="ghost" loading={busy} style={{ minHeight: 42, paddingVertical: 9, paddingHorizontal: 12 }} onPress={() => void run({ type: 'listManagedVenues' })} /></View>

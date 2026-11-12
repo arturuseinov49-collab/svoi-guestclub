@@ -35,7 +35,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node tools/build-server.mjs && tsx --test tests/domain.test.ts tests/pos.test.ts tests/telegram.test.ts tests/pending.test.ts tests/qr.test.ts && node --test tests/server*.mjs",
     "build:server": "node tools/build-server.mjs",
-    "test:ui": "playwright test --config playwright-live.config.ts",
+    "test:ui": "playwright test --config playwright-feedback.config.ts",
     "build": "node tools/build-miniapp.mjs",
     "bot": "node --env-file-if-exists=.env.local bot/index.mjs",
     "dev": "expo start --web",

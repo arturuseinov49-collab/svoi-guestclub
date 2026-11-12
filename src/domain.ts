@@ -2,6 +2,7 @@ import { effectiveGuestProfile } from './venue-profile';
 import type { GuestVenueProfile } from './venue-profile';
 import type { ServiceFlow } from './service-flow';
 import type { GlobalLedgerEntry } from './global-bonuses';
+import type { FeedbackVisit, StaffFeedback, GuestFeedback } from './feedback';
 export type { GlobalProgram, GlobalWallet, GlobalWalletTransaction, GuestGlobalBalance, GlobalLedgerEntry } from './global-bonuses';
 export type { ServiceSessionView, ServiceReadiness, ServiceMapping } from './service-sessions';
 
@@ -16,7 +17,7 @@ export interface Note { id: string; venueId: string; guestId: string; text: stri
 export interface Review { id: string; venueId: string; guestId: string; visitId: string; text: string; rating: number; createdAt: string; response?: string }
 export interface Transaction { id: string; venueId: string; guestId: string; amount: number; reason: string; createdAt: string }
 export interface PosEvent { id: string; provider: 'iiko' | 'rkeeper'; venueId: string; externalId: string; result: 'imported' | 'duplicate' | 'unmatched' | 'ignored' | 'refund'; message: string; createdAt: string }
-export interface Database { version: 1; venues: Venue[]; guests: Guest[]; memberships: Membership[]; visits: Visit[]; notes: Note[]; reviews: Review[]; transactions: Transaction[]; posEvents?: PosEvent[]; globalLedger?: GlobalLedgerEntry[] }
+export interface Database { version: 1; venues: Venue[]; guests: Guest[]; memberships: Membership[]; visits: Visit[]; notes: Note[]; reviews: Review[]; transactions: Transaction[]; posEvents?: PosEvent[]; globalLedger?: GlobalLedgerEntry[]; feedbackVisits?: FeedbackVisit[]; staffFeedback?: StaffFeedback[]; guestFeedback?: GuestFeedback[] }
 export interface Reward { id: string; name: string; description: string; cost: number; icon: 'cafe-outline' | 'ice-cream-outline' | 'restaurant-outline' }
 export const rewards: Reward[] = [
   { id: 'coffee', name: 'Кофе в подарок', description: 'Любой классический кофе', cost: 150, icon: 'cafe-outline' },

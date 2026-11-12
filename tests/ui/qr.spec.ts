@@ -25,7 +25,7 @@ async function scanner(browser: Browser, request: APIRequestContext, version: st
   const venue = await command(request, developer.token, 'createVenue', { name: 'Проверка восстановления сканера', kind: 'Кафе', address: 'Тестовая площадка' });
   const invitation = await command(request, developer.token, 'createManagerInvite', { venueId: venue.venueId });
   await command(request, account.token, 'acceptStaffInvite', { code: invitation.code });
-  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:8094', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const context = await browser.newContext({ baseURL: String(test.info().project.use.baseURL), viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, extraHTTPHeaders: { 'X-Forwarded-For': `198.51.100.${210 + id % 40}` } });
   await context.route('https://telegram.org/js/telegram-web-app.js*', route => route.fulfill({ contentType: 'application/javascript', body: '' }));
   await context.addInitScript(({ initData, version, native }) => {
     const target = window as any;
@@ -54,6 +54,13 @@ test('legacy Telegram scanner can recover after cancel and use a manual code wit
     phone.page.on('request', req => { if (req.url().endsWith('/api/commands')) mutations.push(req.postDataJSON()?.type); });
     // A late callback from the cancelled scan cannot resolve a different guest.
     await phone.page.evaluate(qr => (window as any).__scanCallbacks[0](qr), phone.guest.guestQr);
+    expect(await phone.page.evaluate(() => (window as any).__scanCallbacks[1]('https://example.com/not-a-guest-qr'))).toBe(false);
+    await expect(phone.page.getByText('Это другой QR. Покажите личный QR гостя из «Своих».', { exact: true })).toBeVisible();
+    expect(mutations).toEqual([]);
+    await phone.page.getByLabel('Код гостя или текст QR', { exact: true }).fill('invalid');
+    await phone.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
+    await expect(phone.page.getByText('Это не QR гостя «Своих». Попросите гостя открыть личный QR или введите его код из 8 символов.', { exact: true })).toBeVisible();
+    expect(mutations).toEqual([]);
     await phone.page.getByLabel('Код гостя или текст QR', { exact: true }).fill(phone.guest.guestCode);
     await phone.page.getByRole('button', { name: 'Найти гостя по коду', exact: true }).click();
     await expect(phone.page.getByText('Предпочтения гостя', { exact: true })).toBeVisible();
@@ -61,6 +68,7 @@ test('legacy Telegram scanner can recover after cancel and use a manual code wit
     expect(mutations).toEqual(['addGuest']);
     const response = await request.get('/api/state', { headers: { Authorization: `Bearer ${phone.guest.token}` } });
     const state = await response.json();
+    expect(state.db.feedbackVisits).toHaveLength(0); expect(state.db.staffFeedback).toHaveLength(0);
     expect(state.db.visits).toHaveLength(0); expect(state.db.transactions).toHaveLength(0);
     expect(phone.errors).toEqual([]);
   } finally { await phone.context.close(); }

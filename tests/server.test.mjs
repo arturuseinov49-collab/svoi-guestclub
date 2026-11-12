@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/application.mjs';
+import { defaultGuestProfile } from '../server/venue-profile.mjs';
 
 const botToken = '123456:TEST-ONLY-token-never-valid-in-Telegram';
 function signed(id, now = Date.now(), extra = {}) {
@@ -29,7 +30,7 @@ async function fixture(t, options = {}) {
   async function login(id, now, extra) { const response = await request('/api/session', { data: { initData: signed(id, now, extra) } }); assert.equal(response.status, 200); return response.body; }
   const command = (user, type, fields = {}, key = randomUUID()) => request('/api/commands', { token: user.token, data: { type, idempotencyKey: key, ...fields } });
   const state = user => request('/api/state', { token: user.token });
-  const venue = async (user, suffix = '') => { const developer = await login(900000001); const response = await command(developer, 'createVenue', { name: `Кафе ${suffix || user.user.id}`, kind: 'Кафе', address: 'Тестовый адрес, 10' }); assert.equal(response.status, 200); app.store.sql.prepare("INSERT INTO staff(venue_id,user_id,role) VALUES (?,?,'owner')").run(response.body.result.venueId, user.user.id); return response.body.result; };
+  const venue = async (user, suffix = '') => { const developer = await login(900000001); const response = await command(developer, 'createVenue', { name: `Кафе ${suffix || user.user.id}`, kind: 'Кафе', address: 'Тестовый адрес, 10' }); assert.equal(response.status, 200); app.store.sql.prepare("INSERT INTO staff(venue_id,user_id,role) VALUES (?,?,'owner')").run(response.body.result.venueId, user.user.id); const db = app.store.read(); db.venues.find(v => v.id === response.body.result.venueId).guestProfile = { ...defaultGuestProfile(), feedbackEnabled: true }; app.store.write(db); return response.body.result; };
   return { request, login, command, state, venue, restart: async () => { await app.close(); await start(); }, get app() { return app; } };
 }
 
@@ -47,20 +48,19 @@ test('Telegram signatures, freshness, origin and bearer session are enforced', a
   assert.equal((await f.state(user)).status, 401);
 });
 
-test('venue-scoped staff and own guest data are isolated in API, including internal notes and ratings', async t => {
+test('venue-scoped staff feedback is private even when the employee is a guest elsewhere', async t => {
   const f = await fixture(t); const a = await f.login(10); const b = await f.login(11); const guest = await f.login(12); const stranger = await f.login(13);
   const va = await f.venue(a); const vb = await f.venue(b);
-  assert.equal((await f.command(guest, 'joinVenue', { code: va.joinCode })).status, 200);
-  assert.equal((await f.command(guest, 'joinVenue', { code: vb.joinCode })).status, 200);
-  assert.equal((await f.command(a, 'recordVisit', { venueId: va.venueId, guestId: guest.guestId, bill: 1000, tips: 100, rating: 4 })).status, 200);
-  assert.equal((await f.command(b, 'recordVisit', { venueId: vb.venueId, guestId: guest.guestId, bill: 2000, tips: 0, rating: 2 })).status, 200);
-  assert.equal((await f.command(a, 'addNote', { venueId: va.venueId, guestId: guest.guestId, text: 'Внутренняя заметка', kind: 'preference' })).status, 200);
-  const g = (await f.state(guest)).body; assert.equal(g.db.guests.length, 1); assert.equal(g.db.notes.length, 0); assert.equal(g.db.visits.length, 2); assert.ok(g.db.visits.every(v => v.rating === null)); assert.ok(g.db.venues.every(v => !('joinCode' in v)));
-  const sa = (await f.state(a)).body; assert.equal(sa.db.visits.length, 1); assert.equal(sa.db.notes.length, 1); assert.ok(sa.db.memberships.every(m => m.venueId === va.venueId)); assert.equal(sa.db.visits[0].rating, 4);
-  assert.equal((await f.command(a, 'awardBonus', { venueId: vb.venueId, guestId: guest.guestId, amount: 100, reason: 'Попытка доступа' })).status, 403);
-  for (const user of [guest, stranger]) assert.equal((await f.command(user, 'awardBonus', { venueId: va.venueId, guestId: guest.guestId, amount: 100, reason: 'Попытка доступа' })).status, 403);
-  const ss = (await f.state(stranger)).body; assert.equal(ss.db.venues.length, 0); assert.equal(ss.db.guests.length, 1); assert.equal(ss.db.transactions.length, 0);
-  assert.equal((await f.command(guest, 'redeemReward', { venueId: va.venueId, guestId: guest.guestId, rewardId: 'coffee' })).status, 403);
+  for (const v of [va, vb]) await f.command(guest, 'joinVenue', { code: v.joinCode });
+  const fields = { guestId: guest.guestId, previousVisitId: null, preferences: ['Тихое место'], experience: 'pleasant', comment: 'Только для нашей команды' };
+  assert.equal((await f.command(a, 'recordFeedbackVisit', { venueId: va.venueId, ...fields })).status, 200);
+  assert.equal((await f.command(b, 'recordFeedbackVisit', { venueId: vb.venueId, ...fields })).status, 200);
+  const g = (await f.state(guest)).body; assert.equal(g.productMode, 'feedback'); assert.equal(g.db.feedbackVisits.length, 2); assert.deepEqual(g.db.staffFeedback, []);
+  assert.ok(g.db.feedbackVisits.every(v => !('staffUserId' in v))); assert.ok(g.db.venues.every(v => !('joinCode' in v)));
+  const sa = (await f.state(a)).body; assert.equal(sa.db.staffFeedback.length, 1); assert.equal(sa.db.staffFeedback[0].venueId, va.venueId);
+  assert.equal((await f.command(a, 'recordFeedbackVisit', { venueId: vb.venueId, ...fields })).status, 403);
+  assert.equal((await f.command(guest, 'recordFeedbackVisit', { venueId: va.venueId, ...fields })).status, 403);
+  assert.deepEqual((await f.state(stranger)).body.db.feedbackVisits, []);
 });
 
 test('same Telegram identity shares account between independent sessions and server restarts', async t => {
@@ -77,7 +77,7 @@ test('staff invitations are owner-only, expiring and single-use; revocation imme
   const invite = (await f.command(owner, 'createStaffInvite', { venueId: venue.venueId })).body.result;
   assert.equal((await f.command(staff, 'acceptStaffInvite', { code: invite.code })).status, 200);
   assert.equal((await f.command(intruder, 'acceptStaffInvite', { code: invite.code })).status, 400);
-  assert.equal((await f.command(staff, 'updateProgram', { venueId: venue.venueId, program: { cashback: 30, everyVisits: 2, visitBonus: 1000, tipsBonus: 1000 } })).status, 403);
+  assert.equal((await f.command(staff, 'createStaffInvite', { venueId: venue.venueId })).status, 403);
   assert.equal((await f.command(owner, 'listStaff', { venueId: venue.venueId })).body.result.members.length, 2);
   const op = { venueId: venue.venueId, guestCode: intruder.guestCode }; const key = randomUUID(); assert.equal((await f.command(staff, 'addGuest', op, key)).status, 200);
   assert.equal((await f.command(owner, 'revokeStaff', { venueId: venue.venueId, userId: staff.user.id })).status, 200);
@@ -90,49 +90,48 @@ test('staff invitations are owner-only, expiring and single-use; revocation imme
   assert.equal((await f.state(owner)).status, 401);
 });
 
-test('concurrent visits and redemption are atomic and duplicate request keys never double charge or credit', async t => {
+test('concurrent visit confirmation is atomic, idempotent and creates no financial entries', async t => {
   const f = await fixture(t); const owner = await f.login(40); const guest = await f.login(41); const venue = await f.venue(owner);
-  await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: guest.guestCode });
-  const fields = { venueId: venue.venueId, guestId: guest.guestId, bill: 1000, tips: 100, rating: 5 }; const key = randomUUID();
-  const responses = await Promise.all(Array.from({ length: 8 }, () => f.command(owner, 'recordVisit', fields, key)));
-  assert.ok(responses.every(r => r.status === 200)); assert.equal(responses.filter(r => !r.body.replayed).length, 1);
-  let state = (await f.state(guest)).body; assert.equal(state.db.visits.length, 1); assert.equal(state.db.memberships[0].balance, 75);
-  assert.equal((await f.command(owner, 'recordVisit', { ...fields, bill: 2000 }, key)).status, 409);
-  await f.command(owner, 'awardBonus', { venueId: venue.venueId, guestId: guest.guestId, amount: 150, reason: 'К проверке списания' });
-  const redeemKey = randomUUID(); const reward = { venueId: venue.venueId, guestId: guest.guestId, rewardId: 'coffee' };
-  const rewards = await Promise.all(Array.from({ length: 5 }, () => f.command(owner, 'redeemReward', reward, redeemKey))); assert.ok(rewards.every(r => r.status === 200));
-  state = (await f.state(guest)).body; assert.equal(state.db.memberships[0].balance, 75); assert.equal(state.db.transactions.filter(tx => tx.amount < 0).length, 1);
-  await f.command(owner, 'awardBonus', { venueId: venue.venueId, guestId: guest.guestId, amount: 150, reason: 'Конкурирующее списание' });
-  const unavailable = await Promise.all([f.command(owner, 'redeemReward', reward), f.command(owner, 'redeemReward', reward)]); assert.deepEqual(unavailable.map(r => r.status).sort(), [200, 400]);
-  assert.equal((await f.state(guest)).body.db.memberships[0].balance, 75);
-  const audit = f.app.store.sql.prepare('SELECT COUNT(*) AS n FROM audit WHERE command=?').get('recordVisit'); assert.equal(audit.n, 1);
+  await f.command(owner, 'scanGuest', { venueId: venue.venueId, qr: guest.guestQr });
+  const fields = { venueId: venue.venueId, guestId: guest.guestId, previousVisitId: null, preferences: [], experience: 'neutral', comment: '' }; const key = randomUUID();
+  const responses = await Promise.all(Array.from({ length: 8 }, () => f.command(owner, 'recordFeedbackVisit', fields, key)));
+  assert.ok(responses.every(r => r.status === 200), JSON.stringify(responses)); assert.equal(responses.filter(r => !r.body.replayed).length, 1);
+  const state = (await f.state(guest)).body; assert.equal(state.db.feedbackVisits.length, 1); assert.equal(state.db.memberships[0].balance, 0); assert.deepEqual(state.db.transactions, []); assert.deepEqual(state.db.visits, []);
+  assert.equal((await f.command(owner, 'recordFeedbackVisit', { ...fields, comment: 'Изменённая анкета' }, key)).status, 409);
+  assert.equal((await f.command(owner, 'recordFeedbackVisit', fields)).status, 409);
+  assert.equal(f.app.store.sql.prepare("SELECT COUNT(*) AS n FROM audit WHERE command='recordFeedbackVisit'").get().n, 1);
 });
 
-test('reviews use authenticated identity and a real unreviewed visit; staff responses are scoped', async t => {
+test('guest questionnaire belongs to a confirmed visit and author; responses reach only that author', async t => {
   const f = await fixture(t); const owner = await f.login(50); const guest = await f.login(51); const other = await f.login(52); const venue = await f.venue(owner);
-  await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: guest.guestCode }); await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: other.guestCode });
-  assert.equal((await f.command(guest, 'addReview', { venueId: venue.venueId, rating: 5, text: 'Хорошее место' })).status, 400);
-  await f.command(owner, 'recordVisit', { venueId: venue.venueId, guestId: guest.guestId, bill: 100, tips: 0, rating: 5 });
-  const result = await f.command(guest, 'addReview', { venueId: venue.venueId, guestId: other.guestId, rating: 5, text: 'Хорошее место' }); assert.equal(result.status, 200);
-  const review = result.body.db.reviews[0]; assert.equal(review.guestId, guest.guestId);
-  assert.equal((await f.command(guest, 'addReview', { venueId: venue.venueId, rating: 5, text: 'Второй отзыв' })).status, 400);
-  assert.equal((await f.command(other, 'replyReview', { reviewId: review.id, response: 'Чужой ответ' })).status, 403);
-  assert.equal((await f.command(owner, 'replyReview', { reviewId: review.id, response: 'Будем рады видеть снова!' })).status, 200);
-  assert.equal((await f.state(guest)).body.db.reviews[0].response, 'Будем рады видеть снова!'); assert.equal((await f.state(other)).body.db.reviews.length, 0);
+  for (const g of [guest, other]) await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: g.guestCode });
+  const confirmed = await f.command(owner, 'recordFeedbackVisit', { venueId: venue.venueId, guestId: guest.guestId, previousVisitId: null, preferences: [], experience: 'neutral', comment: '' });
+  assert.equal(confirmed.status, 200);
+  const answers = { food: 'liked', service: 'disliked', atmosphere: 'liked', cleanliness: 'not_used', value: 'liked' };
+  const input = { venueId: venue.venueId, visitId: confirmed.body.result.visitId, answers, comment: 'Долго ждали заказ' };
+  assert.equal((await f.command(other, 'submitGuestFeedback', input)).status, 404);
+  const result = await f.command(guest, 'submitGuestFeedback', input); assert.equal(result.status, 200);
+  assert.equal(result.body.db.guestFeedback[0].guestId, guest.guestId);
+  assert.equal((await f.command(guest, 'submitGuestFeedback', input)).status, 409);
+  const reply = { venueId: venue.venueId, feedbackId: result.body.result.feedbackId, response: 'Спасибо, проверим время ожидания' };
+  assert.equal((await f.command(other, 'replyGuestFeedback', reply)).status, 403);
+  assert.equal((await f.command(owner, 'replyGuestFeedback', reply)).status, 200);
+  assert.equal((await f.state(guest)).body.db.guestFeedback[0].response, reply.response);
+  assert.deepEqual((await f.state(other)).body.db.guestFeedback, []);
+  await f.restart(); assert.equal((await f.state(guest)).body.db.guestFeedback[0].response, reply.response);
 });
 
-test('bad mutations rollback, no client database or POS metadata is trusted', async t => {
+test('retired financial and POS operations fail closed without changing data, even for managers', async t => {
   const f = await fixture(t); const owner = await f.login(60); const guest = await f.login(61); const venue = await f.venue(owner);
-  await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: guest.guestCode }); const base = { venueId: venue.venueId, guestId: guest.guestId };
-  assert.equal((await f.command(owner, 'recordVisit', { ...base, bill: -100, tips: 0, rating: 5 })).status, 400);
-  assert.equal((await f.command(owner, 'recordVisit', { ...base, bill: 100, tips: 0, rating: 6 })).status, 400);
-  assert.equal((await f.command(owner, 'awardBonus', { ...base, amount: 1.5, reason: 'Некорректный бонус' })).status, 400);
-  assert.equal((await f.command(owner, 'addNote', { ...base, text: 'Любая заметка', kind: '__proto__' })).status, 400);
-  assert.equal((await f.command(owner, 'updateProgram', { venueId: venue.venueId, program: { cashback: 200, everyVisits: 0, visitBonus: -2, tipsBonus: 0 } })).status, 400);
+  await f.command(owner, 'addGuest', { venueId: venue.venueId, guestCode: guest.guestCode });
+  const before = f.app.store.read();
+  for (const type of ['recordVisit', 'awardBonus', 'redeemReward', 'updateProgram', 'updateServiceFlow', 'startService', 'cancelService', 'configureServiceMapping', 'resolveServiceOrder', 'addReview', 'addNote']) {
+    for (const alias of [type, ` ${type} `, `\t${type}\n`, `\u00a0${type}\u00a0`]) {
+      assert.equal((await f.command(owner, alias, { venueId: venue.venueId, guestId: guest.guestId, bill: 100, tips: 0, rating: 5 })).status, 410, JSON.stringify(alias));
+    }
+  }
   assert.equal((await f.command(owner, 'replaceDatabase', { db: { memberships: [{ balance: 999999 }] } })).status, 400);
-  let state = (await f.state(guest)).body; assert.equal(state.db.visits.length, 0); assert.equal(state.db.memberships[0].balance, 0);
-  const visit = await f.command(owner, 'recordVisit', { ...base, bill: 100, tips: 0, rating: null, source: 'iiko', externalId: 'fake-pos-receipt' }); assert.equal(visit.status, 200);
-  state = (await f.state(owner)).body; assert.equal(state.db.visits[0].source, undefined); assert.equal(state.db.visits[0].externalId, undefined);
+  assert.deepEqual(f.app.store.read(), before); assert.equal(f.app.pos, undefined);
 });
 
 test('session bearer values stay hashed at rest and malformed or excessive requests fail closed', async t => {
@@ -149,24 +148,17 @@ test('session bearer values stay hashed at rest and malformed or excessive reque
   assert.equal((await f.state(user)).status, 200);
 });
 
-test('audit references actual server-resolved targets; malformed IDs cannot enter SQL or domain state', async t => {
-  const f = await fixture(t); const owner = await f.login(80); const guest = await f.login(81);
-  const developer = await f.login(900000001);
-  const created = await f.command(developer, 'createVenue', { name: 'Настоящее кафе', kind: 'Кафе', address: 'Адрес, 10', venueId: 'forged-venue', guestId: 'forged-guest' });
-  const venue = created.body.result;
-  f.app.store.sql.prepare("INSERT INTO staff(venue_id,user_id,role) VALUES (?,?,'owner')").run(venue.venueId, owner.user.id);
-  await f.command(guest, 'joinVenue', { code: venue.joinCode, venueId: 'forged-venue', guestId: 'forged-guest' });
-  const fields = { venueId: venue.venueId, guestId: guest.guestId };
-  await f.command(owner, 'recordVisit', { ...fields, bill: 200, tips: 0, rating: 5 });
-  const reviewed = await f.command(guest, 'addReview', { venueId: venue.venueId, guestId: 'forged-guest', rating: 5, text: 'Настоящий отзыв' });
-  assert.equal(reviewed.status, 200);
-  await f.command(owner, 'replyReview', { reviewId: reviewed.body.db.reviews[0].id, response: 'Спасибо за отзыв', venueId: 'forged-venue', guestId: 'forged-guest' });
-  const audit = f.app.store.sql.prepare('SELECT command,venue_id,guest_id FROM audit').all();
-  assert.equal(audit.length, 5); assert.ok(audit.every(row => row.venue_id === venue.venueId));
-  assert.equal(audit[0].guest_id, null); assert.ok(audit.slice(1).every(row => row.guest_id === guest.guestId));
-  for (const badId of [Number.MAX_SAFE_INTEGER + 10, {}, [], null]) {
-    assert.equal((await f.command(owner, 'awardBonus', { ...fields, guestId: badId, amount: 100, reason: 'Некорректный ID' })).status, 404);
-    assert.equal((await f.command(owner, 'revokeStaff', { venueId: venue.venueId, userId: badId })).status, 400);
+test('malformed questionnaire rolls back and audit references the confirmed author and venue', async t => {
+  const f = await fixture(t); const owner = await f.login(80); const guest = await f.login(81); const venue = await f.venue(owner);
+  await f.command(guest, 'joinVenue', { code: venue.joinCode });
+  const fields = { venueId: venue.venueId, guestId: guest.guestId, previousVisitId: null, preferences: [], experience: 'neutral', comment: '' };
+  const before = f.app.store.read();
+  for (const invalid of [{ preferences: ['Произвольная характеристика'] }, { experience: '__proto__' }, { comment: 'a'.repeat(1001) }]) {
+    assert.equal((await f.command(owner, 'recordFeedbackVisit', { ...fields, ...invalid })).status, 400);
   }
-  assert.equal(f.app.store.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n, 5);
+  assert.deepEqual(f.app.store.read(), before);
+  const result = await f.command(owner, 'recordFeedbackVisit', fields); assert.equal(result.status, 200);
+  const row = f.app.store.sql.prepare("SELECT actor_id,venue_id,guest_id FROM audit WHERE command='recordFeedbackVisit'").get();
+  assert.equal(row.actor_id, owner.user.id); assert.equal(row.venue_id, venue.venueId); assert.equal(row.guest_id, guest.guestId);
+  for (const badId of [Number.MAX_SAFE_INTEGER + 10, {}, [], null]) assert.equal((await f.command(owner, 'revokeStaff', { venueId: venue.venueId, userId: badId })).status, 400);
 });

@@ -29,7 +29,7 @@ test('published catalog exposes only venue cards and browsing never enrolls a gu
   const before = f.store.read(); const state = f.store.snapshot(104);
   assert.equal(state.catalog.length, 1); assert.equal(state.catalog[0].id, f.venue.venueId);
   assert.deepEqual(Object.keys(state.catalog[0]).sort(), ['id','name','kind','address','monogram','program','guestProfile'].sort());
-  assert.deepEqual(state.catalog[0].guestProfile, f.profile);
+  assert.deepEqual(state.catalog[0].guestProfile, { ...f.profile, feedbackEnabled: true });
   assert.equal(JSON.stringify(state.catalog).includes(f.venue.joinCode), false);
   assert.equal(JSON.stringify(state.catalog).includes('Внутренняя заметка'), false);
   assert.equal(JSON.stringify(state.catalog).includes(f.guest.guestId), false);
@@ -52,10 +52,10 @@ test('only developer can update a venue card, replay rechecks rights and never r
   f.configure(changed);
   const count = f.store.sql.prepare('SELECT COUNT(*) AS count FROM audit').get().count;
   assert.equal(f.configure(f.profile, key).replayed, true);
-  assert.deepEqual(f.store.snapshot(104).catalog[0].guestProfile, changed);
+  assert.deepEqual(f.store.snapshot(104).catalog[0].guestProfile, { ...changed, feedbackEnabled: true });
   assert.equal(f.store.sql.prepare('SELECT COUNT(*) AS count FROM audit').get().count, count);
   const managed = f.cmd(f.developer, 'listManagedVenues').result.managedVenues;
-  assert.deepEqual(managed.find(v => v.id === f.venue.venueId).guestProfile, changed);
+  assert.deepEqual(managed.find(v => v.id === f.venue.venueId).guestProfile, { ...changed, feedbackEnabled: true });
   assert.deepEqual(managed.find(v => v.id === f.privateVenue.venueId).guestProfile, defaultGuestProfile());
   assert.equal(f.store.sql.prepare("SELECT venue_id FROM audit WHERE command='updateVenueProfile' ORDER BY id DESC LIMIT 1").get().venue_id, f.venue.venueId);
   f.store.developerIds.delete(101);
@@ -65,6 +65,7 @@ test('only developer can update a venue card, replay rechecks rights and never r
 test('venue card validation rejects malformed flags, unknown fields and executable or credential-bearing links atomically', t => {
   const f = fixture(t); const before = f.store.read();
   const invalid = [null, {}, { ...f.profile, published: 'true' }, { ...f.profile, demo: 1 }, { ...f.profile, theme: 'external' }, { ...f.profile, theme: ['svoi'] },
+    { ...f.profile, feedbackEnabled: 'true' }, { ...f.profile, feedbackEnabled: null },
     { ...f.profile, secret: 'not-public' }, { ...f.profile, tagline: 'x'.repeat(121) }, { ...f.profile, description: 'x'.repeat(1201) },
     { ...f.profile, terms: 'x'.repeat(1501) }, { ...f.profile, highlights: Array(7).fill('Особенность') }, { ...f.profile, highlights: [''] },
     { ...f.profile, highlights: ['x'.repeat(61)] }, { ...f.profile, description: 'bad\u0000text' },

@@ -13,6 +13,7 @@ export function effectiveGuestProfile(venue) {
         tagline: p.tagline, description: p.description, highlights: [...p.highlights], terms: p.terms,
         links: Object.fromEntries(Object.entries(p.links).filter(([key]) => ['menu', 'booking', 'telegram', 'vk', 'website'].includes(key))),
         features: { loyalty: p.features.loyalty, visits: p.features.visits, reviews: p.features.reviews },
+        feedbackEnabled: p.feedbackEnabled ?? p.published === true,
     };
 }
 function object(value, allowed, required, label) {
@@ -35,7 +36,7 @@ function flag(value, label) {
 }
 export function validateGuestProfile(input) {
     const fields = ['published', 'demo', 'theme', 'tagline', 'description', 'highlights', 'terms', 'links', 'features'];
-    const p = object(input, fields, fields, 'Карточка заведения');
+    const p = object(input, [...fields, 'feedbackEnabled'], fields, 'Карточка заведения');
     if (typeof p.theme !== 'string' || !['svoi', 'elpastor'].includes(p.theme))
         throw new Error('Выберите оформление карточки');
     if (!Array.isArray(p.highlights) || p.highlights.length > 6)
@@ -66,5 +67,6 @@ export function validateGuestProfile(input) {
         tagline: text(p.tagline, 120, 'Короткое описание'), description: text(p.description, 1200, 'Описание'), highlights,
         terms: text(p.terms, 1500, 'Условия'), links: cleanLinks,
         features: { loyalty: flag(features.loyalty, 'Бонусы'), visits: flag(features.visits, 'Визиты'), reviews: flag(features.reviews, 'Отзывы') },
+        ...(p.feedbackEnabled === undefined ? {} : { feedbackEnabled: flag(p.feedbackEnabled, 'Анкеты после визита') }),
     };
 }
